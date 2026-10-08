@@ -26,6 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Saturate host threads (saturate-the-bottleneck)
+        run: |
+          NPROC=$(nproc)
+          JOBS=$(( NPROC * 9 / 10 ))
+          echo "Host logical cores: $NPROC; saturating to 90%: $JOBS threads"
+          echo "CARGO_BUILD_JOBS=$JOBS" >> $GITHUB_ENV
+          echo "RAYON_NUM_THREADS=$JOBS" >> $GITHUB_ENV
+          echo "RUST_TEST_THREADS=$JOBS" >> $GITHUB_ENV
+
       # The optional craft-fonts build input (Japanese fonts), so the Japanese font tests run on
       # Linux; macOS and Windows test the build without it. See craftrules standards/fonts.md.
       - name: Check out craft-fonts (Linux)
@@ -49,18 +58,20 @@ jobs:
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Format
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -j 230 --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test (with craft-fonts)
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
-        run: cargo test -j 230 --workspace -- --test-threads=230
+        run: cargo test --workspace
 
       - name: Layering
         run: cargo xtask layers
@@ -69,13 +80,19 @@ jobs:
         run: cargo xtask assets
 
       - name: CLI without the MCP server still builds
-        run: cargo check -j 230 -p pdfcraft-cli --no-default-features
+        run: cargo check -p pdfcraft-cli --no-default-features
 
   wasm:
     name: wasm32 check
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
+      - name: Saturate host threads (saturate-the-bottleneck)
+        run: |
+          NPROC=$(nproc)
+          JOBS=$(( NPROC * 9 / 10 ))
+          echo "CARGO_BUILD_JOBS=$JOBS" >> $GITHUB_ENV
+          echo "RAYON_NUM_THREADS=$JOBS" >> $GITHUB_ENV
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
@@ -83,6 +100,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: wasm32
+          cache-bin: false
       - name: Check library crates for wasm32
         run: cargo xtask wasm
 
@@ -101,16 +119,23 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
+      - name: Saturate host threads (saturate-the-bottleneck)
+        run: |
+          NPROC=$(nproc)
+          JOBS=$(( NPROC * 9 / 10 ))
+          echo "CARGO_BUILD_JOBS=$JOBS" >> $GITHUB_ENV
+          echo "RAYON_NUM_THREADS=$JOBS" >> $GITHUB_ENV
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: fuzz
+          cache-bin: false
       - name: Fetch the pdf.js corpus (seeds)
         run: cargo xtask corpus
       - name: Fuzz
-        run: cargo xtask fuzz -j 230 --time 900 --seed ${{ github.run_number }}
+        run: cargo xtask fuzz --time 900 --seed ${{ github.run_number }}
       - name: Upload findings
         if: always()
         uses: actions/upload-artifact@v4
