@@ -33,9 +33,6 @@ env:
   RUST_BACKTRACE: 1
   PDFCRAFT_BUILD_SHA: ${{ github.sha }}
   INPUT_VERSION: ${{ inputs.version }}
-  # saturate-the-bottleneck: Cargo.toml's codegen-units = 1 optimises each crate on one thread;
-  # 256 took the release build from 1m59s to 38s on self-hosted runner (binary 66 MB -> 100 MB).
-  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 256
 
 jobs:
   version:
