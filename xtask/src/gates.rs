@@ -78,20 +78,14 @@ pub fn wasm(_: &[String]) -> anyhow::Result<()> {
         .filter(|c| matches!(layers::classify(&c.name), Some(layers::Class::Layer(_) | layers::Class::Standalone(_))))
         .map(|c| c.name)
         .collect();
-    let mut failed = Vec::new();
+    let mut c = cargo();
+    c.args(["check", "--target", "wasm32-unknown-unknown"]);
     for pkg in &set {
-        let mut c = cargo();
-        c.args(["check", "--target", "wasm32-unknown-unknown", "-p", pkg]);
-        if run(c, &format!("cargo check --target wasm32-unknown-unknown -p {pkg}")).is_err() {
-            failed.push(pkg.clone());
-        }
+        c.args(["-p", pkg]);
     }
-    if failed.is_empty() {
-        println!("wasm32: {} crates ok", set.len());
-        Ok(())
-    } else {
-        bail!("wasm32 check failed for: {}", failed.join(", "))
-    }
+    run(c, &format!("cargo check --target wasm32-unknown-unknown ({} crates in parallel)", set.len()))?;
+    println!("wasm32: {} crates ok", set.len());
+    Ok(())
 }
 
 pub fn ci(_: &[String]) -> anyhow::Result<()> {
