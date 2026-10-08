@@ -46,13 +46,13 @@ jobs:
           ref: abb83316d96aa59c1cf64784289e378fe9fa5695
           path: craft-fonts
 
-      - name: Install Linux system dependencies (egui/winit/rfd)
+      # own-ci-runners: jobs never sudo; the owner installs host packages, the job checks them.
+      - name: Check Linux system dependencies (egui/winit/rfd)
         run: |
-          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-              libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev \
-              libgl1-mesa-dev libgtk-3-dev
-          fi
+          for p in libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev; do
+            dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'ok installed' \
+              || { echo "::error::$p missing on $(hostname): see own-ci-runners"; exit 1; }
+          done
 
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:

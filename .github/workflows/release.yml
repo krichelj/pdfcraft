@@ -1,4 +1,4 @@
-# Release pipeline: every push to `release` builds signed installers for every platform and
+# Release pipeline: every push to `release` builds installers for every platform and
 # creates or updates the draft GitHub Release "PdfCraft v<version>". See docs/releasing.md.
 #
 # The jobs that sign (macOS, Windows) and the one that drafts the release run in the `release`
@@ -33,6 +33,9 @@ env:
   RUST_BACKTRACE: 1
   PDFCRAFT_BUILD_SHA: ${{ github.sha }}
   INPUT_VERSION: ${{ inputs.version }}
+  # saturate-the-bottleneck: Cargo.toml's codegen-units = 1 optimises each crate on one thread;
+  # 256 took the release build from 1m59s to 38s on self-hosted runner (binary 66 MB -> 100 MB).
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 256
 
 jobs:
   version:
@@ -62,13 +65,16 @@ jobs:
           } >>"$GITHUB_OUTPUT"
           echo "### PdfCraft v$v (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
 
+  # The fork's runners are Linux only (own-ci-runners), so macOS and Windows are cross-built here:
+  # zig links them, the macOS SDK comes from the owner's Xcode (/opt/macos-sdk).
   macos:
-    name: macOS universal
+    name: macOS aarch64 (Apple Silicon)
     needs: version
-    runs-on: [self-hosted, macos]
+    runs-on: [self-hosted, linux]
     env:
       PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
       PDFCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
+      MACOS_SDKROOT: /opt/macos-sdk/MacOSX27.0.sdk
     steps:
       - uses: actions/checkout@v4
       # The craft-fonts build input (Japanese fonts): every release embeds it. Bump deliberately.
@@ -81,50 +87,34 @@ jobs:
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-          targets: aarch64-apple-darwin, x86_64-apple-darwin
+          targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-macos-universal
+          key: release-macos-aarch64-cross
       - name: Apply version override
         if: inputs.version != ''
         run: cargo xtask version set "$PDFCRAFT_VERSION"
-      - name: Import signing certificate
+      - name: Cross-build and ad-hoc sign
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: packaging/macos/import-cert.sh
-      - name: Build, sign, notarize
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
-        run: packaging/macos/package.sh --arch universal
+        run: packaging/macos/cross-package.sh
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos
           path: dist/release/*
           if-no-files-found: error
-      - name: Remove temporary keychain
-        if: always()
-        run: |
-          if [ -n "${MACOS_KEYCHAIN:-}" ]; then security delete-keychain "$MACOS_KEYCHAIN" || true; fi
 
   windows:
     name: Windows ${{ matrix.arch }}
     needs: version
-    runs-on: [self-hosted, windows]
+    runs-on: [self-hosted, linux]
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: x64, target: x86_64-pc-windows-msvc }
-          - { arch: x86, target: i686-pc-windows-msvc }
-          # Windows on ARM (#61): cross-compiled on the x64 runner, so signing and WiX run as above.
-          # .github/workflows/windows-arm64.yml installs and runs it on ARM64 hardware.
-          - { arch: arm64, target: aarch64-pc-windows-msvc }
+          - { arch: x64, target: x86_64-pc-windows-gnu }
+          - { arch: arm64, target: aarch64-pc-windows-gnullvm }
     env:
       PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
       PDFCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -143,28 +133,15 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-windows-${{ matrix.arch }}
+          key: release-windows-${{ matrix.arch }}-cross
       - name: Apply version override
         if: inputs.version != ''
-        shell: bash
         run: cargo xtask version set "$PDFCRAFT_VERSION"
-      - name: Install WiX
-        shell: pwsh
-        run: dotnet tool install --global wix --version 5.0.2
-      - name: Build, sign, package
-        shell: pwsh
+      - name: Cross-build the portable zip
         env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
-        run: ./packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
+        run: packaging/windows/cross-package.sh --arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows-${{ matrix.arch }}
@@ -181,8 +158,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64, runner: ubuntu-22.04, deb: amd64 }
-          - { arch: aarch64, runner: ubuntu-22.04-arm, deb: arm64 }
+          # x86_64 only: these hosts are x86_64, and an aarch64 leg here built x86_64 binaries.
+          - { arch: x86_64 }
     env:
       PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
       PDFCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -196,17 +173,12 @@ jobs:
           repository: storytold/craft-fonts
           ref: abb83316d96aa59c1cf64784289e378fe9fa5695
           path: craft-fonts
-      - name: Install build and packaging tools
+      # own-ci-runners: jobs never sudo; the owner installs host packages, the job checks them.
+      - name: Check build and packaging tools
         run: |
-          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \
-              libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev \
-              desktop-file-utils appstream python3-yaml zsync
-            curl -fsSL -o "$RUNNER_TEMP/nfpm.deb" \
-              "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.deb }}.deb"
-            sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
-          fi
+          for t in nfpm zsync desktop-file-validate appstreamcli python3; do
+            command -v "$t" >/dev/null || { echo "::error::$t missing on $(hostname): see own-ci-runners"; exit 1; }
+          done
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
@@ -250,8 +222,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64, runner: ubuntu-24.04 }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
+          - { arch: x86_64 }
     env:
       PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
       PDFCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -261,16 +232,11 @@ jobs:
         with:
           name: release-linux-${{ matrix.arch }}
           path: dist/linux
-      - name: Install flatpak-builder
+      - name: Check flatpak-builder
         run: |
-          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-            sudo apt-get update
-            # librsvg2-common: the SVG pixbuf loader. flatpak-builder runs the host's
-            # `appstreamcli compose`, which renders the scalable icon and fails without it.
-            sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-common
-            # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces bubblewrap needs.
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
+          for t in flatpak flatpak-builder bwrap; do
+            command -v "$t" >/dev/null || { echo "::error::$t missing on $(hostname): see own-ci-runners"; exit 1; }
+          done
       - name: Build the Flatpak bundle
         run: packaging/linux/flatpak-bundle.sh "dist/linux/pdfcraft-$PDFCRAFT_VERSION-linux-${{ matrix.arch }}.tar.gz"
       - uses: actions/upload-artifact@v4
@@ -281,7 +247,8 @@ jobs:
 
   freebsd:
     name: FreeBSD x86_64
-    if: false
+    # Off for the same reason as freebsd.yml (vmactions/freebsd-vm is unsafe on shared hosts).
+    if: vars.ENABLE_FREEBSD_VM == 'true'
     needs: version
     # GitHub has no FreeBSD runners: build in a FreeBSD VM (see .github/workflows/freebsd.yml).
     runs-on: [self-hosted, linux]
@@ -305,8 +272,10 @@ jobs:
         with:
           release: "14.3"
           usesh: true
-          cpu: 4
-          mem: 12288
+          # saturate-the-bottleneck: the hosts have 256-512 threads and 754 GB+; 4 vCPUs left the
+          # VM build serial.
+          cpu: 64
+          mem: 65536
           envs: "PDFCRAFT_VERSION PDFCRAFT_BUILD_DATE VERSION_OVERRIDE"
           # The same packages as the FreeBSD CI workflow, plus bash for the packaging script.
           prepare: |
@@ -351,10 +320,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-web
-      - name: Install trunk
+      - name: Check trunk
         run: |
-          curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar -xz -C "$HOME/.cargo/bin" trunk
+          command -v trunk >/dev/null || { echo "::error::trunk missing on $(hostname): see own-ci-runners"; exit 1; }
           trunk --version
       - name: Apply version override
         if: inputs.version != ''
@@ -372,8 +340,8 @@ jobs:
 
   release:
     name: Draft GitHub Release
-    # Needs the signing jobs, which only run on `release`: a branch dry run never drafts a release.
-    needs: [version, macos, windows, linux, flatpak, freebsd, web]
+    # FreeBSD is left out of needs while its job is off (see above).
+    needs: [version, macos, windows, linux, flatpak, web]
     runs-on: [self-hosted, linux]
     permissions:
       contents: write

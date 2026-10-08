@@ -11,7 +11,7 @@ on:
   schedule:
     - cron: '23 */6 * * *'
   workflow_run:
-    workflows: ["CI", "Packaging lint"]
+    workflows: ["CI", "Packaging lint", "Release", "FreeBSD"]
     types: [requested, completed]
 
 permissions:

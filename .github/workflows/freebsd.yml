@@ -24,6 +24,11 @@ permissions:
 jobs:
   freebsd:
     name: FreeBSD 14 (build + test)
+    # Off until vmactions/freebsd-vm is replaced by a direct anyvm.py call: on these shared hosts the
+    # action always sudos, chmods $HOME to 0755, appends `StrictHostKeyChecking no` to ~/.ssh/config
+    # and exposes the VM's root ssh (a public key) on every private IP. Host side (qemu, ovmf,
+    # /dev/kvm ACL) is ready on both hosts since 2026-10-08.
+    if: vars.ENABLE_FREEBSD_VM == 'true'
     runs-on: [self-hosted, linux]
     timeout-minutes: 300
     steps:

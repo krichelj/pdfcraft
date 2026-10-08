@@ -83,7 +83,7 @@ opt-level = 1
 
 [profile.release]
 lto = "thin"
-codegen-units = 1
+codegen-units = 1  # serial: size-tuned local release; the fork's workflows set CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256
 
 # Vendored, patched third-party crates (see vendor/README.md). Each patch is meant to go upstream.
 [patch.crates-io]
