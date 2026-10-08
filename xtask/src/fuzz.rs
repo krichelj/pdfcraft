@@ -324,8 +324,10 @@ pub fn run(args: &[String]) -> Result<()> {
     let iterations: usize = flag(args, "--iterations").map(str::parse).transpose()?.unwrap_or(usize::MAX);
     let seed: u64 = flag(args, "--seed").unwrap_or("1").parse()?;
     // Half the cores by default: a saturated machine turns slow inputs into false hangs.
-    let jobs: usize =
-        flag(args, "--jobs").map(str::parse).transpose()?.unwrap_or_else(|| std::thread::available_parallelism().map_or(2, |n| (n.get() * 9 / 10).max(1)));
+    let jobs: usize = flag(args, "--jobs")
+        .map(str::parse)
+        .transpose()?
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(2, |n| (n.get() * 9 / 10).max(1)));
     let timeout = Duration::from_secs(flag(args, "--timeout").unwrap_or("10").parse()?);
 
     let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
