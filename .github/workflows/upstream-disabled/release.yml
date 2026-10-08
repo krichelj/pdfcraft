@@ -34,7 +34,7 @@ env:
 jobs:
   version:
     name: version
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     environment: release
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -236,7 +236,7 @@ jobs:
     name: FreeBSD x86_64
     needs: version
     # GitHub has no FreeBSD runners: build in a FreeBSD VM (see .github/workflows/freebsd.yml).
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     environment: release
     timeout-minutes: 180
     env:
@@ -283,7 +283,7 @@ jobs:
   web:
     name: Web (wasm)
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     environment: release
     env:
       PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
@@ -326,7 +326,7 @@ jobs:
   release:
     name: Draft GitHub Release
     needs: [version, macos, windows, linux, freebsd, web]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     environment: release
     permissions:
       contents: write
