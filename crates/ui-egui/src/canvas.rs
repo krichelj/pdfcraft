@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, TextureHandle, TextureOptions, Vec2, pos2, vec2};
 use pdfcraft_engine::{DocId, Edit};
-use pdfcraft_render::{DocInfo, LinkTarget, PageText, RenderPool, RenderRequest, RequestKind, Tile, device_pixels};
+use pdfcraft_render::{DocInfo, LayerOp, LinkTarget, PageText, RenderPool, RenderRequest, RequestKind, Tile, device_pixels};
 
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, QuickTool, RightPanel, comments, icons, widgets};
@@ -45,6 +45,102 @@ pub enum PageLayout {
     Continuous,
     TwoUp,
     Single,
+}
+
+impl PageLayout {
+    /// Every page display, in the order the View menu, the rail's Page display button and
+    /// Preferences list them.
+    pub const ORDER: [Self; 3] = [Self::Continuous, Self::Single, Self::TwoUp];
+
+    /// The name settings and view options use: `continuous`, `single` or `two-up`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Continuous => "continuous",
+            Self::Single => "single",
+            Self::TwoUp => "two-up",
+        }
+    }
+
+    /// The layout an [`as_str`](Self::as_str) name stands for, in any case. `None` for
+    /// anything else, so callers can reject a typo rather than switch layouts silently.
+    pub fn try_parse(value: &str) -> Option<Self> {
+        Self::ORDER.into_iter().find(|l| l.as_str().eq_ignore_ascii_case(value.trim()))
+    }
+
+    /// Rail icon for this layout.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Continuous => "arrow-up-down",
+            Self::Single => "file-text",
+            Self::TwoUp => "columns-2",
+        }
+    }
+
+    /// Registry command that switches to this layout (`PdfCraftApp::execute`).
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Continuous => "view.layout.continuous",
+            Self::Single => "view.layout.single",
+            Self::TwoUp => "view.layout.two_up",
+        }
+    }
+
+    /// The layout a [`command`](Self::command) id switches to.
+    pub fn from_command(id: &str) -> Option<Self> {
+        Self::ORDER.into_iter().find(|l| l.command() == id)
+    }
+
+    /// Menu label: the label of [`command`](Self::command), which the catalogs translate.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Continuous => "Continuous scrolling",
+            Self::Single => "Single page",
+            Self::TwoUp => "Two-page view",
+        }
+    }
+}
+
+/// How a newly opened document is shown (Preferences ▸ Documents and view). A PDF that asks
+/// for its own layout or zoom gets that instead.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewDefaults {
+    pub layout: PageLayout,
+    /// [`Fit::Width`] or [`Fit::Page`], or [`Fit::None`] for a fixed `zoom`.
+    pub fit: Fit,
+    /// The zoom with [`Fit::None`] (1.0 = 100%).
+    pub zoom: f32,
+}
+
+impl Default for ViewDefaults {
+    fn default() -> Self {
+        Self { layout: PageLayout::Continuous, fit: Fit::Width, zoom: 1.0 }
+    }
+}
+
+impl ViewDefaults {
+    /// The zoom as settings and view options name it: `fit-width`, `fit-page` or a percentage.
+    pub fn zoom_name(&self) -> String {
+        match self.fit {
+            Fit::Page => "fit-page".into(),
+            Fit::None => format!("{}%", (self.zoom * 100.0).round()),
+            Fit::Width | Fit::Height => "fit-width".into(),
+        }
+    }
+
+    /// These defaults with the zoom a [`zoom_name`](Self::zoom_name) names, in any case. `None`
+    /// for anything else, including a percentage outside the 8–6400% the view can show.
+    pub fn with_zoom(self, name: &str) -> Option<Self> {
+        let name = name.trim();
+        let (fit, zoom) = if name.eq_ignore_ascii_case("fit-width") {
+            (Fit::Width, self.zoom)
+        } else if name.eq_ignore_ascii_case("fit-page") {
+            (Fit::Page, self.zoom)
+        } else {
+            let percent = name.strip_suffix('%').unwrap_or(name).trim().parse::<f32>().ok().filter(|p| (8.0..=6400.0).contains(p))?;
+            (Fit::None, percent / 100.0)
+        };
+        Some(Self { fit, zoom, ..self })
+    }
 }
 
 /// The find bar (⌘F): query, matches across the document, current match.
@@ -101,6 +197,9 @@ pub struct DocView {
     pub forward: Vec<usize>,
     /// Pending navigation: page and fraction down the page to align with the viewport top.
     pub goto: Option<(usize, f32)>,
+    /// Pending keyboard scrolling, in points down (negative: up): ↓ / ↑, and Page Down /
+    /// Page Up where the pages scroll.
+    pub key_scroll: f32,
     /// Briefly outline an annotation after navigating to it from a panel.
     pub flash: Option<(usize, [f32; 4], f64)>,
     /// Compare files: differences shaded on this document's pages (page, user-space box, colour).
@@ -133,8 +232,10 @@ pub struct DocView {
     viewport_screen: Rect,
     /// Pending zoom anchor: page, position within it (0..1), and offset from the viewport corner.
     zoom_anchor: Option<(usize, f32, f32, Vec2)>,
+    /// Turns wheel input into page turns in single-page view.
+    wheel: crate::wheel_pager::WheelPager,
     pub(crate) auto_scroll: crate::autoscroll::AutoScroll,
-    /// Pages selected in the organize grid (0-based). Empty means "the current page".
+    /// Pages selected in the organize grid or the Pages panel (0-based). Empty means "the current page".
     pub selected: BTreeSet<usize>,
     /// Anchor for ⇧-click range selection in the organize grid.
     select_anchor: Option<usize>,
@@ -174,14 +275,27 @@ pub struct DocView {
     pub marquee_done: Option<crate::zoom_snap::Marquee>,
     /// Fill & Sign text being typed.
     pub fill_text: Option<crate::fill_sign::TypeBox>,
+    /// A queued Fill & Sign signature: select it after its edit succeeds, then leave placement.
+    pub(crate) fill_signature_page: Option<usize>,
+    pub(crate) signature_drag: crate::signature_drag::SignatureDrag,
     /// A non-edit action requested by the organize toolbar, handled by the app.
     pub pending_action: Option<ViewAction>,
+    /// The grid gap the next inserted files go to (set by a "+" between pages); otherwise they
+    /// go after the selection.
+    pub insert_at: Option<usize>,
+    /// The page-grid gap under the pointer this frame (where dropped files go), when it can
+    /// take pages.
+    pub grid_gap: Option<usize>,
 }
 
 /// Organize-toolbar actions that need the app (file pickers, new tabs, dialogs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewAction {
     InsertFromFile,
+    /// Insert files at a gap of the page grid (0 = before the first page).
+    InsertFromFileAt(usize),
+    /// Save the document as the grid shows it.
+    Save,
     Extract,
     Split,
     /// Copy the selected pages (Cut also deletes them).
@@ -215,12 +329,14 @@ impl DocView {
         v
     }
 
-    pub fn new(id: DocId, info: &DocInfo) -> Self {
+    /// A view of a newly opened document, shown as `defaults` say. Opening a file then applies
+    /// any layout or zoom the PDF itself asks for.
+    pub fn new(id: DocId, info: &DocInfo, defaults: ViewDefaults) -> Self {
         Self {
             id,
-            zoom: 1.0,
-            fit: Fit::Width,
-            layout: PageLayout::Continuous,
+            zoom: defaults.zoom,
+            fit: defaults.fit,
+            layout: defaults.layout,
             rotation: 0,
             current: 0,
             organize: false,
@@ -231,6 +347,7 @@ impl DocView {
             back: Vec::new(),
             forward: Vec::new(),
             goto: None,
+            key_scroll: 0.0,
             flash: None,
             compare_marks: Vec::new(),
             pages: HashMap::new(),
@@ -252,6 +369,7 @@ impl DocView {
             screen_xforms: Vec::new(),
             viewport_screen: Rect::NOTHING,
             zoom_anchor: None,
+            wheel: Default::default(),
             auto_scroll: Default::default(),
             selected: BTreeSet::new(),
             select_anchor: None,
@@ -262,6 +380,8 @@ impl DocView {
             image_selection: None,
             block_drag: None,
             pending_action: None,
+            insert_at: None,
+            grid_gap: None,
             comments: Default::default(),
             measure: Default::default(),
             forms: Default::default(),
@@ -276,6 +396,8 @@ impl DocView {
             marquee: None,
             marquee_done: None,
             fill_text: None,
+            fill_signature_page: None,
+            signature_drag: Default::default(),
         }
     }
 
@@ -308,6 +430,37 @@ impl DocView {
         if let Some(first) = self.selected.first() {
             self.current = *first;
         }
+    }
+
+    /// A click on page `i`'s thumbnail, in the organize grid or the Pages panel. ⇧ selects the
+    /// range from the anchor (or the current page); ⌘/Ctrl toggles the page; a plain click
+    /// selects only it. `seed_current` is for the Pages panel, where an empty selection means
+    /// the current page: the first ⌘-click on another page keeps the current one selected too.
+    pub fn click_page(&mut self, i: usize, modifiers: egui::Modifiers, seed_current: bool) {
+        if i >= self.page_count {
+            return;
+        }
+        if modifiers.shift {
+            let a = self.select_anchor.unwrap_or(self.current);
+            self.selected = (a.min(i)..=a.max(i)).collect();
+        } else if modifiers.command {
+            if seed_current && self.selected.is_empty() && i != self.current {
+                self.selected.insert(self.current);
+            }
+            if !self.selected.remove(&i) {
+                self.selected.insert(i);
+            }
+            self.select_anchor = Some(i);
+        } else {
+            self.selected = [i].into();
+            self.select_anchor = Some(i);
+        }
+    }
+
+    /// Drop the page selection; a later ⇧-click ranges from `anchor`.
+    pub fn clear_page_selection(&mut self, anchor: Option<usize>) {
+        self.selected.clear();
+        self.select_anchor = anchor.filter(|a| *a < self.page_count);
     }
 
     pub fn render_pending(&self) -> bool {
@@ -502,6 +655,8 @@ impl DocView {
             }
             self.forward.clear();
         }
+        // Partial wheel motion belongs to the old place.
+        self.wheel.clear_motion();
         self.goto = Some((page, 0.0));
         self.current = page;
         self.page_input = (page + 1).to_string();
@@ -578,6 +733,48 @@ impl DocView {
     pub fn rotate_view(&mut self, clockwise: bool) {
         self.rotation = (self.rotation + if clockwise { 90 } else { 270 }) % 360;
         self.goto = Some((self.current, 0.0));
+    }
+
+    /// Switch the zoom mode, keeping the current page in view.
+    pub fn set_fit(&mut self, fit: Fit) {
+        self.fit = fit;
+        self.goto = Some((self.current, 0.0));
+    }
+
+    /// Switch the page display. A no-op when the layout is already current, so re-selecting
+    /// it never yanks a scrolled view back to the top.
+    pub fn set_layout(&mut self, layout: PageLayout) {
+        if self.layout == layout {
+            return;
+        }
+        self.layout = layout;
+        self.goto = Some((self.current, 0.0));
+    }
+
+    /// Set the cover page in two-page view. A no-op unless something changed.
+    pub fn set_cover(&mut self, cover: bool) {
+        if self.cover != cover {
+            self.cover = cover;
+            self.goto = Some((self.current, 0.0));
+        }
+    }
+
+    /// Whether the cover page setting applies: only two-page view has a cover page.
+    pub fn cover_applies(&self) -> bool {
+        self.layout == PageLayout::TwoUp
+    }
+
+    /// One wheel event in single-page view (the rules are in `wheel_pager`): `dy` is its
+    /// vertical delta (negative scrolls down) and `now` is egui time. With `can_turn` false
+    /// the gesture is followed but the page stays. Returns whether the page turned.
+    pub fn single_page_wheel(&mut self, unit: egui::MouseWheelUnit, dy: f32, phase: egui::TouchPhase, now: f64, can_turn: bool) -> bool {
+        if self.layout != PageLayout::Single {
+            return false;
+        }
+        let Some(forward) = self.wheel.feed(unit, dy, phase, now, can_turn) else { return false };
+        let before = self.current;
+        self.step_page(forward);
+        self.current != before
     }
 
     /// Displayed page size in points for this view rotation.
@@ -683,6 +880,7 @@ impl DocView {
             } else {
                 let tex = ctx.load_texture(format!("page-{:?}-{page}", self.id), img, TextureOptions::LINEAR);
                 self.pages.insert(page, PageTex { tag: r.request.tag, tex });
+                self.signature_drag.page_received(page);
                 self.waiting_since.remove(&page);
             }
         }
@@ -692,21 +890,24 @@ impl DocView {
     }
 
     fn fit_zoom(&mut self, info: &DocInfo) {
-        let max_w = info.pages.iter().map(|p| self.display_size(p).0).fold(1.0, f32::max);
+        let largest = |side: fn((f32, f32)) -> f32| info.pages.iter().map(|p| side(self.display_size(p))).fold(1.0, f32::max);
+        let max_w = largest(|s| s.0);
+        // Single-page view fits the page it shows. The scrolling views fit their largest page,
+        // so the zoom holds still while pages of other sizes scroll past.
+        let (w, h) = match self.layout {
+            PageLayout::Single => info.pages.get(self.current).map_or_else(|| (max_w, largest(|s| s.1)), |p| self.display_size(p)),
+            PageLayout::Continuous | PageLayout::TwoUp => (max_w, largest(|s| s.1)),
+        };
         let avail_w = (self.viewport_w - 2.0 * SIDE).max(100.0);
         let per_row = if self.layout == PageLayout::TwoUp { 2.0 } else { 1.0 };
         match self.fit {
             Fit::Width => self.zoom = (avail_w - GAP * (per_row - 1.0)) / (max_w * PT * per_row),
             Fit::Page => {
-                let (w, h) = self.display_size(&info.pages[self.current.min(info.pages.len() - 1)]);
                 let zw = (avail_w - GAP * (per_row - 1.0)) / (w * PT * per_row);
                 let zh = (self.viewport_h - 2.0 * MARGIN) / (h * PT);
                 self.zoom = zw.min(zh);
             }
-            Fit::Height => {
-                let (_, h) = self.display_size(&info.pages[self.current.min(info.pages.len() - 1)]);
-                self.zoom = (self.viewport_h - 2.0 * MARGIN) / (h * PT);
-            }
+            Fit::Height => self.zoom = (self.viewport_h - 2.0 * MARGIN) / (h * PT),
             Fit::None => {}
         }
         self.zoom = self.zoom.clamp(0.08, 64.0);
@@ -771,6 +972,26 @@ pub struct PageXform {
 }
 
 impl PageXform {
+    /// Draw an image in PDF user space, preserving orientation through both page rotations.
+    pub(crate) fn paint_user_image(
+        &self,
+        painter: &egui::Painter,
+        tex: egui::TextureId,
+        info: &DocInfo,
+        page: usize,
+        rect: [f64; 4],
+        color: Color32,
+    ) {
+        let Some(p) = info.pages.get(page) else { return };
+        let mut mesh = egui::Mesh::with_texture(tex);
+        for (x, y, u, v) in [(rect[0], rect[3], 0.0, 0.0), (rect[2], rect[3], 1.0, 0.0), (rect[2], rect[1], 1.0, 1.0), (rect[0], rect[1], 0.0, 1.0)] {
+            let p = p.user_to_view(x as f32, y as f32);
+            mesh.vertices.push(egui::epaint::Vertex { pos: self.norm_to_screen(p[0] / self.pw, p[1] / self.ph), uv: pos2(u, v), color });
+        }
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(mesh));
+    }
     pub fn norm_to_screen(&self, u: f32, v: f32) -> Pos2 {
         let (a, b) = match self.rot {
             90 => (1.0 - v, u),
@@ -900,18 +1121,36 @@ pub fn shortcuts(view: &mut DocView, ctx: &egui::Context) {
     if key(Key::End) {
         view.go_to_page(usize::MAX);
     }
-    if view.layout == PageLayout::Single || ctx.input(|i| i.modifiers.command) {
-        if key(Key::ArrowRight) || key(Key::PageDown) {
-            view.step_page(true);
-        }
-        if key(Key::ArrowLeft) || key(Key::PageUp) {
-            view.step_page(false);
+    // As in Acrobat: → / ← go to the next / previous page in every layout (#185), and so do
+    // ⌘Page Down / ⌘Page Up, or plain Page Down / Page Up in single-page view.
+    let command = ctx.input(|i| i.modifiers.command);
+    let scrolls = view.layout != PageLayout::Single;
+    if key(Key::ArrowRight) || (key(Key::PageDown) && (command || !scrolls)) {
+        view.step_page(true);
+    }
+    if key(Key::ArrowLeft) || (key(Key::PageUp) && (command || !scrolls)) {
+        view.step_page(false);
+    }
+    // ↓ / ↑ scroll a line, and Page Down / Page Up a screen where the pages scroll.
+    if !command {
+        let screen = (view.viewport_h - KEY_SCROLL_LINE).max(KEY_SCROLL_LINE);
+        let steps = [(Key::ArrowDown, KEY_SCROLL_LINE), (Key::ArrowUp, -KEY_SCROLL_LINE), (Key::PageDown, screen), (Key::PageUp, -screen)];
+        for (k, by) in steps {
+            if key(k) && (scrolls || matches!(k, Key::ArrowDown | Key::ArrowUp)) {
+                view.key_scroll += by;
+            }
         }
     }
 }
 
+/// How far ↓ / ↑ scroll: a mouse-wheel line on the desktop. Page Down / Page Up keep this much
+/// of the previous screen in view.
+const KEY_SCROLL_LINE: f32 = 40.0;
+
 pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    // Keyboard scrolling applies to this frame's page view only, never later.
+    let key_scroll = std::mem::take(&mut app.views[index].key_scroll);
     // The Search panel closed: its search moves to the find bar.
     let search_open = app.right == Some(crate::RightPanel::Search);
     if let Some(f) = app.views[index].find.as_mut()
@@ -943,9 +1182,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         Some(Notice::Signatures) => app.right = Some(RightPanel::Signatures),
         None => {}
     }
+    // No dialog, close prompt or palette over the page: only then does page input count.
+    let unobstructed = app.dialog.is_none() && app.close_request.is_none() && !app.palette_open;
     if view.organize {
-        let auto_scroll_enabled = app.dialog.is_none() && app.close_request.is_none() && !app.palette_open;
-        organize_grid(view, info, &doc.renderer, doc.allows_assembly(), auto_scroll_enabled, ui, &t);
+        organize_grid(view, info, &doc.renderer, doc.allows_assembly(), doc.dirty, unobstructed, ui, &t);
         return;
     }
 
@@ -964,7 +1204,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         }
     }
     view.viewport_screen = avail;
-    let auto_delta = if app.dialog.is_none() && app.close_request.is_none() && !app.palette_open {
+    let auto_delta = if unobstructed {
         view.auto_scroll.update(ui, avail, false)
     } else {
         view.auto_scroll.cancel();
@@ -977,6 +1217,32 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         * if view.layout == PageLayout::TwoUp { 2.0 } else { 1.0 };
     let content_w = (max_w + 2.0 * SIDE).max(avail.width());
     let rects = view.layout(info, content_w);
+    let middle_gesture = view.auto_scroll.blocks_input();
+    // Single page: when the whole page fits, the wheel would do nothing, so it turns pages
+    // instead; zoomed in far enough to pan, it pans. Touch drags are untouched: with nothing
+    // to pan, touch users turn pages with the rail buttons, the page box and the arrow keys.
+    // Runs before `visible_pages` so the frame that turns the page draws it.
+    if view.layout == PageLayout::Single {
+        // Within a point, so layout rounding can't stop a fitting page from turning.
+        let fits = rects.get(view.current.min(rects.len().saturating_sub(1))).is_some_and(|r| r.height() + 2.0 * MARGIN <= avail.height() + 1.0);
+        let can_turn = fits && !middle_gesture && unobstructed && ui.rect_contains_pointer(avail);
+        // Every wheel event goes to the pager, so it follows each trackpad touch to its end
+        // even while the page can't turn.
+        ui.input(|i| {
+            for e in &i.events {
+                if let egui::Event::MouseWheel { unit, delta, phase, modifiers } = e {
+                    // Zooming (⌘ or Ctrl) and sideways scrolling (Shift) never turn pages.
+                    let dy = if modifiers.command || modifiers.ctrl || modifiers.shift { 0.0 } else { delta.y };
+                    view.single_page_wheel(*unit, dy, *phase, i.time, can_turn);
+                }
+            }
+        });
+        if can_turn {
+            // Paging owns vertical wheel motion here. A diagonal gesture keeps its sideways
+            // part, as `ScrollArea` itself handles each axis.
+            ui.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+        }
+    }
     let visible_pages: Vec<usize> = match view.layout {
         PageLayout::Single => vec![view.current.min(rects.len() - 1)],
         _ => (0..rects.len()).collect(),
@@ -989,7 +1255,6 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         _ => (0.0, rects.last().map(|r| r.bottom() + MARGIN).unwrap_or(0.0)),
     };
 
-    let middle_gesture = view.auto_scroll.blocks_input();
     let mut scroll = egui::ScrollArea::both().auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource {
         drag: if middle_gesture {
             egui::scroll_area::DragScroll::Never
@@ -1000,6 +1265,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         },
         ..Default::default()
     });
+    // Each document keeps its own scroll position when switching tabs (#189).
+    scroll = scroll.id_salt(("page-view", view.id));
     if let Some((page, fx, fy, rel)) = view.zoom_anchor.take() {
         let r = rects[page.min(rects.len() - 1)];
         let point = pos2(r.left() + fx * r.width(), r.top() - y_shift + fy * r.height());
@@ -1083,8 +1350,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             // Only interactions pause; the document must keep its original colours.
             ui.set_opacity(opacity);
         }
-        if auto_delta != Vec2::ZERO {
-            ui.scroll_with_delta_animation(auto_delta, egui::style::ScrollAnimation::none());
+        // Middle-button auto-scroll and the keyboard (positive y moves the content down).
+        let delta = auto_delta - vec2(0.0, key_scroll);
+        if delta != Vec2::ZERO {
+            ui.scroll_with_delta_animation(delta, egui::style::ScrollAnimation::none());
         }
         let (resp_rect, resp) = ui.allocate_exact_size(vec2(content_w, content_h), Sense::click_and_drag());
         // The Hand tool pans: the content widget takes every drag, so scroll by its delta.
@@ -1103,8 +1372,12 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         let mut visible_now = Vec::new();
         view.screen_rects.clear();
         view.screen_xforms.clear();
+        // Visible heights (points) closer than this are equal: one page size can meet the
+        // viewport a fraction of a point differently once the scroll offset is applied.
+        const TIE: f32 = 0.5;
         let mut current = view.current;
         let mut best_overlap = -1.0f32;
+        let mut current_overlap = -1.0f32;
         let pointer = ui.input(|i| i.pointer.hover_pos());
         for &i in &visible_pages {
             let r = rects[i].translate(origin.to_vec2());
@@ -1118,7 +1391,12 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                     .push((i, PageXform { rect: r, rot: view.rotation, pw: info.pages[i].width.max(1.0), ph: info.pages[i].height.max(1.0) }));
             }
             let overlap = r.intersect(visible).height();
-            if overlap > best_overlap {
+            if i == view.current {
+                current_overlap = overlap;
+            }
+            // Pages shown equally (two rows wholly on screen) differ only by rounding: the
+            // topmost one counts.
+            if overlap > best_overlap + TIE {
                 best_overlap = overlap;
                 current = i;
             }
@@ -1250,8 +1528,25 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             if let QuickTool::Fill(ft) = tool
                 && allowed
             {
-                match crate::fill_sign::page_input(ui, &resp, &xf, i, info, ft, view, signature.as_ref(), initials.as_ref(), &author, today) {
+                match crate::fill_sign::page_input(
+                    ui,
+                    &resp,
+                    &xf,
+                    i,
+                    info,
+                    ft,
+                    view,
+                    signature.as_ref(),
+                    initials.as_ref(),
+                    &mut app.signature_preview,
+                    &author,
+                    today,
+                ) {
                     Some(crate::fill_sign::FillAction::Edit(e)) => view.pending_edit = Some(*e),
+                    Some(crate::fill_sign::FillAction::Signature(e)) => {
+                        view.pending_edit = Some(*e);
+                        view.fill_signature_page = Some(i);
+                    }
                     Some(crate::fill_sign::FillAction::CreateSignature) => open_signature = true,
                     Some(crate::fill_sign::FillAction::CreateInitials) => open_initials = true,
                     None => {}
@@ -1317,6 +1612,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             };
             let on_link = tool == QuickTool::Link && can_modify && crate::link_ui::page_input(ui, &resp, &xf, i, info, &doc_links, view);
             let consumed = on_edit_text || on_link || on_content || boxing || on_field || comments::page_input(ui, &resp, &pcx, view);
+
+            let preview_target = (tool == QuickTool::Select && !comments_hidden).then_some(view.comments.selected).flatten();
+            view.signature_drag.prepare(ui.ctx(), doc, preview_target, scale);
+            view.signature_drag.paint(painter, &pcx, &view.comments, view.pending_edit.as_ref());
 
             // Text layer: find matches, selection, I-beam and drag-to-select.
             let to_screen = |g: [f32; 4]| xf.view_rect(g);
@@ -1420,8 +1719,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                     }
                 }
             }
-            // Link hover + click.
-            if let Some(p) = pointer {
+            // Fill & Sign keeps its placement cursor clear of link/comment hover feedback.
+            if !matches!(tool, QuickTool::Fill(_))
+                && let Some(p) = pointer
+            {
                 for l in info.links.iter().filter(|l| l.page == i) {
                     let sr = xf.user_rect(info, i, l.rect);
                     if sr.contains(p) {
@@ -1431,6 +1732,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                                 crate::i18n::fmt(tl!("Go to page {p}"), &[("p", info.pages.get(*n).map(|p| p.label.as_str()).unwrap_or("?"))])
                             }
                             LinkTarget::Uri(u) => u.clone(),
+                            LinkTarget::SetLayers { .. } => tl!("Set layer visibility").to_string(),
                             LinkTarget::Other(s) => crate::i18n::fmt(tl!("{s} action"), &[("s", s)]),
                         };
                         hover_text = Some((p, label));
@@ -1477,6 +1779,11 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                     view.flash = None;
                 }
             }
+        }
+        // The page navigated to stays current while no page shows more of itself, so the next
+        // page step starts from it rather than from a page further down the screen (#188).
+        if current_overlap >= best_overlap - TIE {
+            current = view.current;
         }
         if view.layout != PageLayout::Single {
             view.current = current;
@@ -1644,6 +1951,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     match clicked_link {
         Some(LinkTarget::Page(p)) => view.go_to_page(p),
         Some(LinkTarget::Uri(u)) => app.request_document_url(&u, crate::LinkOrigin::Link),
+        Some(LinkTarget::SetLayers { changes, preserve_rb }) => set_layers(app, index, &changes, preserve_rb),
         Some(LinkTarget::Other(s)) => app.notify_fmt("{s} actions run in the JavaScript engine (M6)", &[("s", &s)]),
         None => {}
     }
@@ -1757,6 +2065,9 @@ fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action: pdfcraft_
         }
         B::Named(n) => match n.as_str() {
             "Print" => app.open_print(),
+            // What PdfCraft's XFA buttons use, and what a script's `execMenuItem("Save")`
+            // does too: the Save As dialog, so a click never overwrites the file unasked.
+            "SaveAs" => app.run_command("file.save_as"),
             "NextPage" => app.views[index].step_page(true),
             "PrevPage" => app.views[index].step_page(false),
             "FirstPage" => app.views[index].go_to_page(0),
@@ -1788,6 +2099,21 @@ fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action: pdfcraft_
                     Some(pdfcraft_engine::Edit::Batch { label: label.into(), edits: vec![pdfcraft_engine::Edit::ApplyScriptChanges { changes }] });
             }
         }
+        B::SetLayers { changes, preserve_rb } => {
+            use pdfcraft_engine::form_scripts::LayerOp as Op;
+            let changes: Vec<(LayerOp, (u32, u16))> = changes
+                .into_iter()
+                .map(|(op, ocg)| {
+                    let op = match op {
+                        Op::On => LayerOp::On,
+                        Op::Off => LayerOp::Off,
+                        Op::Toggle => LayerOp::Toggle,
+                    };
+                    (op, ocg)
+                })
+                .collect();
+            set_layers(app, index, &changes, preserve_rb);
+        }
         B::Alert(m) => app.notify(m),
         B::Submit(url) => app.notify_fmt(
             "{name} submits the form to {url}; PdfCraft doesn't send form data. Save the document to keep your entries.",
@@ -1798,6 +2124,15 @@ fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action: pdfcraft_
             let id = app.views[index].id;
             app.run_button_script(id, name, &js);
         }
+    }
+}
+
+/// Run a set-layer-visibility action from a button or link. It changes what is shown, as the
+/// Layers panel does (which follows), not the document.
+fn set_layers(app: &mut PdfCraftApp, index: usize, changes: &[(LayerOp, (u32, u16))], preserve_rb: bool) {
+    let id = app.views[index].id;
+    if app.session.set_layer_state(id, changes, preserve_rb) {
+        app.views[index].invalidate_content();
     }
 }
 
@@ -2161,7 +2496,7 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
 }
 
 /// The organize toolbar: page operations on the selection (Acrobat's Organize Pages bar).
-fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, ui: &mut egui::Ui, t: &Tokens) {
+fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: bool, ui: &mut egui::Ui, t: &Tokens) {
     let targets = view.target_pages();
     let n = info.pages.len();
     let (first, last) = (targets.first().copied().unwrap_or(0), targets.last().copied().unwrap_or(0));
@@ -2235,6 +2570,11 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, ui: &mut
                 if widgets::ghost_button(ui, "x", tl!("Close")).on_hover_text(tl!("Back to the document")).clicked() {
                     view.organize = false;
                 }
+                // What the grid shows is what is saved.
+                let save = ui.add_enabled_ui(dirty, |ui| widgets::pill_button(ui, tl!("Save pages"), true)).inner;
+                if save.on_hover_text(tl!("Save these pages as one PDF")).on_disabled_hover_text(tl!("No changes to save")).clicked() {
+                    view.pending_action = Some(ViewAction::Save);
+                }
             });
         });
     });
@@ -2275,11 +2615,36 @@ fn drop_gap(cells: &[(usize, Rect)], p: Pos2) -> Option<usize> {
     Some(if p.x < r.center().x { *i } else { i + 1 })
 }
 
-fn organize_grid(view: &mut DocView, info: &DocInfo, pool: &RenderPool, editable: bool, auto_scroll_enabled: bool, ui: &mut egui::Ui, t: &Tokens) {
+/// A "+" on a gap of the page grid: insert files there. Returns whether it was clicked.
+fn gap_button(ui: &mut egui::Ui, gap: usize, at: Pos2, height: f32, label: String, t: &Tokens) -> bool {
+    let resp = ui.interact(Rect::from_center_size(at, Vec2::splat(22.0)), ui.id().with(("org-gap", gap)), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
+    let hot = resp.hovered();
+    if hot {
+        ui.painter().line_segment([pos2(at.x, at.y - height / 2.0), pos2(at.x, at.y + height / 2.0)], Stroke::new(3.0, t.accent));
+    }
+    ui.painter().circle(at, 9.0, if hot { t.accent } else { t.chrome }, Stroke::new(1.0, if hot { t.accent } else { t.border }));
+    let ink = Stroke::new(1.5, if hot { Color32::WHITE } else { t.text_muted });
+    ui.painter().line_segment([at - vec2(4.0, 0.0), at + vec2(4.0, 0.0)], ink);
+    ui.painter().line_segment([at - vec2(0.0, 4.0), at + vec2(0.0, 4.0)], ink);
+    resp.on_hover_text(label).clicked()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn organize_grid(
+    view: &mut DocView,
+    info: &DocInfo,
+    pool: &RenderPool,
+    editable: bool,
+    dirty: bool,
+    auto_scroll_enabled: bool,
+    ui: &mut egui::Ui,
+    t: &Tokens,
+) {
     let ppp = ui.ctx().pixels_per_point();
     let cell = vec2(190.0, 250.0);
     let mut open_page = None;
-    organize_toolbar(view, info, editable, ui, t);
+    organize_toolbar(view, info, editable, dirty, ui, t);
     let viewport = ui.available_rect_before_wrap();
     view.viewport_screen = viewport;
     let auto_delta = if auto_scroll_enabled {
@@ -2346,18 +2711,7 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, pool: &RenderPool, editable
                 ui.painter().text(pos2(c.center().x, pr.bottom() + 16.0), Align2::CENTER_CENTER, &p.label, theme::medium(12.0), t.text_muted);
                 if resp.clicked() {
                     let m = ui.input(|i| i.modifiers);
-                    if m.shift {
-                        let a = view.select_anchor.unwrap_or(view.current);
-                        view.selected = (a.min(i)..=a.max(i)).collect();
-                    } else if m.command {
-                        if !view.selected.remove(&i) {
-                            view.selected.insert(i);
-                        }
-                        view.select_anchor = Some(i);
-                    } else {
-                        view.selected = [i].into();
-                        view.select_anchor = Some(i);
-                    }
+                    view.click_page(i, m, false);
                     view.current = i;
                 }
                 if resp.double_clicked() {
@@ -2382,6 +2736,25 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, pool: &RenderPool, editable
                         ui.close();
                     }
                 });
+            }
+        }
+        // Between pages (and at both ends): insert files right there.
+        if editable && !middle_gesture && view.org_drag.is_none() {
+            let mid = |r: &Rect| r.top() + 16.0 + (cell.y - 56.0) / 2.0;
+            for (i, c) in &cells {
+                let label = info
+                    .pages
+                    .get(*i)
+                    .map(|p| crate::i18n::fmt(tl!("Insert a file before page {label}"), &[("label", &p.label)]))
+                    .unwrap_or_default();
+                if gap_button(ui, *i, pos2(c.left(), mid(c)), cell.y - 56.0, label, t) {
+                    view.pending_action = Some(ViewAction::InsertFromFileAt(*i));
+                }
+            }
+            if let Some((i, c)) = cells.last()
+                && gap_button(ui, i + 1, pos2(c.right(), mid(c)), cell.y - 56.0, tl!("Insert a file at the end").to_string(), t)
+            {
+                view.pending_action = Some(ViewAction::InsertFromFileAt(i + 1));
             }
         }
         // While dragging: the gap the pages would go to, drawn as a bar.
@@ -2418,6 +2791,27 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, pool: &RenderPool, editable
             view.org_drag = None;
         }
     });
+    // Files dragged in from outside go to the gap under the pointer. Some platforms don't say
+    // where the pointer is until the files are dropped; then the whole grid is the target.
+    let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| viewport.contains(*p));
+    view.grid_gap = pointer.filter(|_| editable && view.org_drag.is_none()).and_then(|p| drop_gap(&cells, p));
+    if editable && ui.input(|i| !i.raw.hovered_files.is_empty()) {
+        let painter = ui.painter().with_clip_rect(viewport);
+        painter.rect_stroke(viewport.shrink(2.0), CornerRadius::same(6), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+        if let Some(gap) = view.grid_gap {
+            let at = cells.iter().find(|(i, _)| *i == gap).map(|(_, r)| (r.left() + 3.0, r.y_range()));
+            if let Some((x, row)) = at.or(cells.last().map(|(_, r)| (r.right() - 3.0, r.y_range()))) {
+                painter.line_segment([pos2(x, row.min + 10.0), pos2(x, row.max - 10.0)], Stroke::new(3.0, t.accent));
+            }
+        }
+        // A "+" that follows the pointer.
+        if let Some(p) = pointer {
+            let at = p + vec2(16.0, 16.0);
+            painter.circle_filled(at, 9.0, t.accent);
+            painter.line_segment([at - vec2(4.0, 0.0), at + vec2(4.0, 0.0)], Stroke::new(1.5, Color32::WHITE));
+            painter.line_segment([at - vec2(0.0, 4.0), at + vec2(0.0, 4.0)], Stroke::new(1.5, Color32::WHITE));
+        }
+    }
     view.auto_scroll.paint(ui, viewport);
     let s = THUMB_W * ppp / info.pages.iter().map(|p| p.width).fold(1.0, f32::max);
     let queue: Vec<RenderRequest> = (0..info.pages.len())
@@ -2431,5 +2825,102 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, pool: &RenderPool, editable
     if let Some(p) = open_page {
         view.organize = false;
         view.go_to_page(p);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view(pages: usize, layout: PageLayout) -> DocView {
+        let info = pdfcraft_render::DocInfo {
+            pages: (0..pages)
+                .map(|_| pdfcraft_render::PageInfo { width: 300.0, height: 400.0, label: String::new(), crop: [0.0, 0.0, 300.0, 400.0], rotation: 0 })
+                .collect(),
+            ..Default::default()
+        };
+        DocView::new(DocId(1), &info, ViewDefaults { layout, ..Default::default() })
+    }
+
+    /// One mouse-wheel notch (a line) at `at` seconds.
+    fn notch(v: &mut DocView, dy: f32, at: f64) -> bool {
+        v.single_page_wheel(egui::MouseWheelUnit::Line, dy, egui::TouchPhase::Move, at, true)
+    }
+
+    #[test]
+    fn notches_turn_pages_and_stop_at_the_ends() {
+        let mut v = view(3, PageLayout::Single);
+        assert!(notch(&mut v, -1.0, 1.0) && notch(&mut v, -1.0, 1.05));
+        assert_eq!(v.current, 2);
+        assert!(!notch(&mut v, -1.0, 1.1), "nothing turns past the last page");
+        assert!(notch(&mut v, 1.0, 1.2));
+        assert_eq!(v.current, 1);
+    }
+
+    #[test]
+    fn wheel_is_single_page_only() {
+        for layout in [PageLayout::Continuous, PageLayout::TwoUp] {
+            let mut v = view(3, layout);
+            assert!(!notch(&mut v, -1.0, 1.0), "{layout:?} ignores the wheel");
+            assert_eq!(v.current, 0);
+        }
+    }
+
+    #[test]
+    fn navigation_drops_partial_wheel_motion() {
+        use egui::{MouseWheelUnit::Point, TouchPhase::Move, TouchPhase::Start};
+        let mut v = view(3, PageLayout::Single);
+        assert!(!v.single_page_wheel(Point, 0.0, Start, 1.0, true));
+        assert!(!v.single_page_wheel(Point, -30.0, Move, 1.02, true));
+        v.go_to_page(1);
+        // The same touch has to move a full notch's worth again before it turns.
+        assert!(!v.single_page_wheel(Point, -30.0, Move, 1.04, true));
+        assert!(v.single_page_wheel(Point, -30.0, Move, 1.06, true));
+        assert_eq!(v.current, 2);
+    }
+
+    #[test]
+    fn reselecting_the_layout_does_not_scroll_to_top() {
+        let mut v = view(3, PageLayout::Continuous);
+        v.goto = None;
+        v.set_layout(PageLayout::Continuous);
+        assert!(v.goto.is_none(), "re-selecting the current layout is a no-op");
+        v.set_layout(PageLayout::Single);
+        assert_eq!(v.goto, Some((0, 0.0)));
+    }
+
+    #[test]
+    fn fit_page_and_height_hold_still_while_mixed_page_sizes_scroll_past() {
+        let page =
+            |width: f32, height: f32| pdfcraft_render::PageInfo { width, height, label: String::new(), crop: [0.0, 0.0, width, height], rotation: 0 };
+        let info = DocInfo { pages: vec![page(300.0, 400.0), page(600.0, 800.0)], ..Default::default() };
+        for fit in [Fit::Page, Fit::Height] {
+            let mut v = DocView::new(DocId(1), &info, ViewDefaults::default());
+            (v.fit, v.viewport_w, v.viewport_h) = (fit, 1000.0, 800.0);
+            v.fit_zoom(&info);
+            let zoom = v.zoom;
+            v.current = 1;
+            v.fit_zoom(&info);
+            assert_eq!(v.zoom, zoom, "{fit:?}: scrolling onto a bigger page keeps the zoom");
+            // Single-page view shows one page at a time, so it fits each one.
+            v.layout = PageLayout::Single;
+            v.fit_zoom(&info);
+            let big = v.zoom;
+            v.current = 0;
+            v.fit_zoom(&info);
+            assert!(v.zoom > big, "{fit:?}: single-page view fits the page it shows");
+        }
+    }
+
+    #[test]
+    fn layouts_match_their_commands_and_names() {
+        for l in PageLayout::ORDER {
+            let spec = pdfcraft_engine::commands::command(l.command()).expect("registered");
+            assert_eq!((l.label(), l.icon()), (spec.label, spec.icon), "{l:?}");
+            assert_eq!(PageLayout::from_command(l.command()), Some(l));
+            assert_eq!(PageLayout::try_parse(l.as_str()), Some(l));
+        }
+        assert_eq!(PageLayout::try_parse(" Two-Up "), Some(PageLayout::TwoUp));
+        assert_eq!(PageLayout::try_parse("facing"), None);
     }
 }

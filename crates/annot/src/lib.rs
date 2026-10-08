@@ -662,6 +662,21 @@ fn annot_dict(doc: &Document, r: ObjRef) -> Dict {
     doc.get(r).as_dict().cloned().unwrap_or_default()
 }
 
+/// The embedded image of a Fill & Sign image signature or initials (0-based target).
+/// Other stamps have appearances that can't be represented by this image alone.
+pub fn signature_image(doc: &Document, page: usize, index: usize) -> Result<Option<ObjRef>, AnnotError> {
+    let p = page_ref(doc, page)?;
+    let list = annots(doc, p);
+    let entry = list.get(index).ok_or(AnnotError::NoSuchAnnotation { page, index })?;
+    let obj = doc.resolve(entry);
+    let Some(d) = obj.as_dict() else { return Ok(None) };
+    Ok((d.name(b"Subtype") == Some(b"Stamp")
+        && matches!(d.name(b"Name"), Some(b"PCCustomSignature" | b"PCCustomInitials"))
+        && matches!(d.get(b"PCPictureImage"), Some(Object::Bool(true))))
+    .then(|| d.reference(b"PCPicture"))
+    .flatten())
+}
+
 // ── building ────────────────────────────────────────────────────────────────────────────────
 
 /// Annotation flags (§12.5.3).
@@ -724,12 +739,19 @@ fn rect_for(shape: &Shape, style: &Style) -> Result<[f64; 4], AnnotError> {
         | Shape::TextBox { rect, .. }
         | Shape::Typewriter { rect, .. }
         | Shape::Stamp { rect, .. }
-        | Shape::CustomStamp { rect, .. }
         | Shape::TypedSignature { rect, .. }
         | Shape::Mark { rect, .. } => {
             let r = normalize(*rect);
             if !finite(rect) || r[2] - r[0] < 1.0 || r[3] - r[1] < 1.0 {
                 return Err(bad("rectangle (too small)"));
+            }
+            r
+        }
+        Shape::CustomStamp { rect, .. } => {
+            let r = normalize(*rect);
+            // Image signatures may be very thin; a positive PDF appearance box still works.
+            if !finite(rect) || r[2] <= r[0] || r[3] <= r[1] {
+                return Err(bad("rectangle (empty)"));
             }
             r
         }
@@ -1353,12 +1375,24 @@ pub fn move_annotation(doc: &mut Document, page: usize, index: usize, dx: f64, d
     Ok(())
 }
 
-/// Resize a rectangle, oval or text box to `rect`; its appearance is redrawn.
+/// Resize a rectangle, oval, text box or stamp to `rect`. Stamps keep their appearance,
+/// which PDF viewers scale from its bounding box into the new rectangle.
 pub fn set_rect(doc: &mut Document, page: usize, index: usize, rect: [f64; 4], meta: &Meta) -> Result<(), AnnotError> {
     let (_, r) = annot_ref(doc, page, index)?;
     unlocked(doc, r)?;
     let d = annot_dict(doc, r);
     let subtype = String::from_utf8_lossy(d.name(b"Subtype").unwrap_or_default()).into_owned();
+    if subtype == "Stamp" {
+        let rect = normalize(rect);
+        if !finite(&rect) || rect[2] <= rect[0] || rect[3] <= rect[1] {
+            return Err(AnnotError::Invalid("invalid rectangle (too small)".into()));
+        }
+        doc.update_dict(r, |d| {
+            d.set(b"Rect".to_vec(), num_array(&rect));
+            touch(d, meta);
+        })?;
+        return Ok(());
+    }
     if !matches!(subtype.as_str(), "Square" | "Circle" | "FreeText") {
         return Err(AnnotError::Invalid(format!("{subtype} comments can't be resized")));
     }
