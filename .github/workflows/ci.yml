@@ -11,6 +11,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CARGO_BUILD_JOBS: 64
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -51,13 +52,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy -j 64 --workspace --all-targets -- -D warnings
 
       - name: Test (with craft-fonts)
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
-        run: cargo test --workspace
+        run: cargo test -j 64 --workspace -- --test-threads=64
 
       - name: Layering
         run: cargo xtask layers
@@ -66,7 +67,7 @@ jobs:
         run: cargo xtask assets
 
       - name: CLI without the MCP server still builds
-        run: cargo check -p pdfcraft-cli --no-default-features
+        run: cargo check -j 64 -p pdfcraft-cli --no-default-features
 
   wasm:
     name: wasm32 check
@@ -107,7 +108,7 @@ jobs:
       - name: Fetch the pdf.js corpus (seeds)
         run: cargo xtask corpus
       - name: Fuzz
-        run: cargo xtask fuzz --time 900 --seed ${{ github.run_number }}
+        run: cargo xtask fuzz -j 64 --time 900 --seed ${{ github.run_number }}
       - name: Upload findings
         if: always()
         uses: actions/upload-artifact@v4
