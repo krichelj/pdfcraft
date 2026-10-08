@@ -82,6 +82,7 @@ jobs:
           path: craft-fonts
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
+          toolchain: stable
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
@@ -141,6 +142,7 @@ jobs:
           path: craft-fonts
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
@@ -200,14 +202,18 @@ jobs:
           path: craft-fonts
       - name: Install build and packaging tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev \
-            desktop-file-utils appstream python3-yaml zsync
-          curl -fsSL -o "$RUNNER_TEMP/nfpm.deb" \
-            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.deb }}.deb"
-          sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
+          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev \
+              desktop-file-utils appstream python3-yaml zsync
+            curl -fsSL -o "$RUNNER_TEMP/nfpm.deb" \
+              "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.deb }}.deb"
+            sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
+          fi
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-linux-${{ matrix.arch }}
@@ -262,12 +268,14 @@ jobs:
           path: dist/linux
       - name: Install flatpak-builder
         run: |
-          sudo apt-get update
-          # librsvg2-common: the SVG pixbuf loader. flatpak-builder runs the host's
-          # `appstreamcli compose`, which renders the scalable icon and fails without it.
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-common
-          # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces bubblewrap needs.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo apt-get update
+            # librsvg2-common: the SVG pixbuf loader. flatpak-builder runs the host's
+            # `appstreamcli compose`, which renders the scalable icon and fails without it.
+            sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-common
+            # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces bubblewrap needs.
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - name: Build the Flatpak bundle
         run: packaging/linux/flatpak-bundle.sh "dist/linux/pdfcraft-$PDFCRAFT_VERSION-linux-${{ matrix.arch }}.tar.gz"
       - uses: actions/upload-artifact@v4
@@ -278,6 +286,7 @@ jobs:
 
   freebsd:
     name: FreeBSD x86_64
+    if: false
     needs: version
     # GitHub has no FreeBSD runners: build in a FreeBSD VM (see .github/workflows/freebsd.yml).
     runs-on: [self-hosted, linux]
@@ -345,6 +354,7 @@ jobs:
           path: craft-fonts
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
