@@ -30,10 +30,12 @@ jobs:
         run: |
           NPROC=$(nproc)
           JOBS=$(( NPROC * 9 / 10 ))
-          echo "Host logical cores: $NPROC; saturating to 90%: $JOBS threads"
-          echo "CARGO_BUILD_JOBS=$JOBS" >> $GITHUB_ENV
-          echo "RAYON_NUM_THREADS=$JOBS" >> $GITHUB_ENV
-          echo "RUST_TEST_THREADS=$JOBS" >> $GITHUB_ENV
+          echo "Host logical cores: ${NPROC}; saturating to 90%: ${JOBS} threads"
+          {
+            echo "CARGO_BUILD_JOBS=${JOBS}"
+            echo "RAYON_NUM_THREADS=${JOBS}"
+            echo "RUST_TEST_THREADS=${JOBS}"
+          } >> "$GITHUB_ENV"
 
       # The optional craft-fonts build input (Japanese fonts), so the Japanese font tests run on
       # Linux; macOS and Windows test the build without it. See craftrules standards/fonts.md.
@@ -91,8 +93,10 @@ jobs:
         run: |
           NPROC=$(nproc)
           JOBS=$(( NPROC * 9 / 10 ))
-          echo "CARGO_BUILD_JOBS=$JOBS" >> $GITHUB_ENV
-          echo "RAYON_NUM_THREADS=$JOBS" >> $GITHUB_ENV
+          {
+            echo "CARGO_BUILD_JOBS=${JOBS}"
+            echo "RAYON_NUM_THREADS=${JOBS}"
+          } >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
@@ -123,8 +127,10 @@ jobs:
         run: |
           NPROC=$(nproc)
           JOBS=$(( NPROC * 9 / 10 ))
-          echo "CARGO_BUILD_JOBS=$JOBS" >> $GITHUB_ENV
-          echo "RAYON_NUM_THREADS=$JOBS" >> $GITHUB_ENV
+          {
+            echo "CARGO_BUILD_JOBS=${JOBS}"
+            echo "RAYON_NUM_THREADS=${JOBS}"
+          } >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
