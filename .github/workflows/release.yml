@@ -81,13 +81,15 @@ jobs:
           repository: storytold/craft-fonts
           ref: abb83316d96aa59c1cf64784289e378fe9fa5695
           path: craft-fonts
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
-        with:
-          toolchain: stable
-          targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-macos-aarch64-cross
+      # No dtolnay/rust-toolchain or rust-cache here: both write the user's real ~/.cargo, and a
+      # concurrent job's rustup reinstall deleted the toolchain under a running build (run
+      # 37862986363: CurrentDirUnlinked, then `cargo: command not found`). The hosts carry stable
+      # with aarch64-apple-darwin (own-ci-runners); the job only checks it.
+      - name: Check the toolchain
+        run: |
+          rustup target list --installed | grep -qx aarch64-apple-darwin \
+            || { echo "::error::aarch64-apple-darwin target missing on $(hostname): see own-ci-runners"; exit 1; }
+          cargo --version
       - name: Apply version override
         if: inputs.version != ''
         run: cargo xtask version set "$PDFCRAFT_VERSION"
