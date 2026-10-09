@@ -2,6 +2,16 @@
 
 PdfCraft is a clean-room, open-source, Rust-native PDF application targeting Adobe Acrobat Pro parity. It runs natively on macOS, Windows, Linux and FreeBSD, and on the web via WASM. It is the sibling of `../photocraft` (a Photoshop-class editor) and follows the same conventions.
 
+## Fork rule (krichelj/pdfcraft): macOS on Apple Silicon only
+**IRONCLAD (owner, 2026-10-08): this fork builds, packages, releases and debugs for macOS on Apple
+Silicon (M1, M4: `aarch64-apple-darwin`) and nothing else.** The owner uses no other platform:
+"i dont care about Web and Windows x64 or any other thing this is NOT MAC OS M series". Windows,
+Linux, Flatpak, FreeBSD and Web packaging stay exactly as upstream (storytold/pdfcraft) has them:
+do not edit, fix, build or run them here, and take upstream's versions on every merge. The fork's
+`release.yml` runs only `version`, `macos` and `release`, on the own Linux runners
+(own-ci-runners), cross-building with `packaging/macos/cross-package.sh`. Shared code and its tests
+(`ci.yml`) still run, because the Mac app is built from them.
+
 ## Start every session here
 1. Read `plan/STATUS.md`: the current milestone, the next unchecked task and any blockers. `ROADMAP.md` holds the milestone estimates and progress; update its table and log at the end of every session.
    - Read `ROADMAP.md` §Honest assessment and §Where we're lacking and where we're going before choosing work. They rank the gaps (own renderer, hardening, fidelity against Acrobat, editing existing content, Pro workflows, 1.0 polish); prefer them over new P2/P3 features, and keep both sections true when things change.
