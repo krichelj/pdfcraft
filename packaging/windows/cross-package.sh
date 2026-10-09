@@ -25,6 +25,11 @@ case "$ARCH" in
   arm64) TARGET=aarch64-pc-windows-gnullvm ;;
   *) echo "usage: $0 --arch x64|arm64" >&2; exit 2 ;;
 esac
+# Per-run zig caches: concurrent jobs sharing ~/.cache/cargo-zigbuild and zig's global cache
+# raced (run 37861883023: "getcwd() failed", CurrentDirUnlinked in the Windows x64 link).
+ZIG_SCRATCH="${RUNNER_TEMP:-$CARGO_TARGET_DIR}/zig-cache"
+export ZIG_GLOBAL_CACHE_DIR="$ZIG_SCRATCH/global" ZIG_LOCAL_CACHE_DIR="$ZIG_SCRATCH/local" \
+  CARGO_ZIGBUILD_CACHE_DIR="$ZIG_SCRATCH/cargo-zigbuild"
 for tool in zig cargo-zigbuild zip; do
   command -v "$tool" >/dev/null || { echo "error: $tool not found on $(hostname)" >&2; exit 1; }
 done
