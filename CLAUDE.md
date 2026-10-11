@@ -12,6 +12,11 @@ do not edit, fix, build or run them here, and take upstream's versions on every 
 (own-ci-runners), cross-building with `packaging/macos/cross-package.sh`. Shared code and its tests
 (`ci.yml`) still run, because the Mac app is built from them.
 
+## Machine privacy rule: Zero infrastructure leaks
+**IRONCLAD (owner, 2026-10-10): Machine names, cluster hostnames, and server topology must NEVER appear in public workflows, code, comments, or PRs.**
+- **Anonymous runner labels**: Workflows must specify generic self-hosted labels (`runs-on: [self-hosted, linux]`), never hostnames.
+- **Runtime identity via GitHub Secrets**: Host machine names or cluster scratch paths needed at runtime must be accessed exclusively through repository secrets (`${{ secrets.RUNNER_HOST_NAME }}`, `${{ secrets.MACOS_SDKROOT }}`).
+
 ## Start every session here
 1. Read `plan/STATUS.md`: the current milestone, the next unchecked task and any blockers. `ROADMAP.md` is the one-page summary (stage, numbers, progress log) and `docs/roadmap.md` the milestone table; at the end of every session update the milestone row and add a line to the ROADMAP.md progress log.
    - Read `docs/gaps.md` (the ranked gaps: Acrobat interop, the open-issue backlog, the renderer and a fidelity harness, editing existing content, Pro workflows, 1.0 polish) and `docs/target-app-parity.md` (the numbers and how they are measured) before choosing work. Prefer the gaps over new P2/P3 features, and keep both documents true when things change (`docs/` progress docs follow craftrules `standards/progress-docs.md`: status line, revision history).
