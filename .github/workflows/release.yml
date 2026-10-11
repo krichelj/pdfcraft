@@ -63,7 +63,7 @@ jobs:
           echo "### PdfCraft v$v (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
 
   # The fork's runners are Linux only (own-ci-runners), so macOS is cross-built here: zig links it,
-  # the macOS SDK comes from the owner's Xcode (/opt/macos-sdk).
+  # the macOS SDK comes from the owner's Xcode (/scratch/XXXXX/macos-sdk).
   macos:
     name: macOS aarch64 (Apple Silicon)
     needs: version
@@ -71,7 +71,7 @@ jobs:
     env:
       PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
       PDFCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
-      MACOS_SDKROOT: /opt/macos-sdk/MacOSX27.0.sdk
+      MACOS_SDKROOT: ${{ secrets.MACOS_SDKROOT }}
     steps:
       - uses: actions/checkout@v4
       # The craft-fonts build input (Japanese fonts): every release embeds it. Bump deliberately.

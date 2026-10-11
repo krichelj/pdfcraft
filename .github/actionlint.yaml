@@ -2,5 +2,3 @@
 self-hosted-runner:
   labels:
     - macos-release
-      # custom-runner-1
-      # custom-runner-2
