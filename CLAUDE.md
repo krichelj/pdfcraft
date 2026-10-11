@@ -12,6 +12,13 @@ do not edit, fix, build or run them here, and take upstream's versions on every 
 (own-ci-runners), cross-building with `packaging/macos/cross-package.sh`. Shared code and its tests
 (`ci.yml`) still run, because the Mac app is built from them.
 
+## Fork rule: Always sync upstream on every commit
+**IRONCLAD (owner, 2026-10-10): Always update from upstream (`git fetch upstream && git merge upstream/main`) every time you commit in this repo.** Because this repository is an active fork, it must stay continually aligned with upstream (`storytold/pdfcraft:main`). Never commit or push changes against a stale upstream base. On every commit:
+1. Fetch latest upstream: `git fetch upstream`.
+2. Integrate upstream changes: `git merge upstream/main`.
+3. Verify quality gates: `cargo check --all-targets && cargo xtask assets`.
+4. Push to `origin main`.
+
 ## Machine privacy rule: Zero infrastructure leaks
 **IRONCLAD (owner, 2026-10-10): Machine names, cluster hostnames, and server topology must NEVER appear in public workflows, code, comments, or PRs.**
 - **Anonymous runner labels**: Workflows must specify generic self-hosted labels (`runs-on: [self-hosted, linux]`), never hostnames.
