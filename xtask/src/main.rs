@@ -17,7 +17,7 @@ type Command = fn(&[String]) -> anyhow::Result<()>;
 
 /// Every subcommand: name, one-line summary, entry point.
 const COMMANDS: &[(&str, &str, Command)] = &[
-    ("version", "Print the workspace version, or `version set X.Y.Z[-pre]` to change it and refresh Cargo.lock", version_cmd),
+    ("version", "Workspace version: show, base, set X.Y.Z[-pre], fork [id], or bump-fork [id]", version_cmd),
     ("layers", "Enforce the crate dependency layering (plan/architecture.md §3)", gates::layers),
     ("wasm", "cargo check --target wasm32-unknown-unknown for every crate below L8", gates::wasm),
     ("deny", "Dependency licences, bans, sources and advisories (deny.toml; needs cargo-deny)", gates::deny),
