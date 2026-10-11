@@ -553,9 +553,11 @@ impl Host for crate::PdfCraftApp {
                 "fit": format!("{:?}", v.fit),
                 "layout": format!("{:?}", v.layout),
                 "organize": v.organize,
+                "grid_zoom": v.grid_zoom(),
                 // Pages picked in the organize grid or the Pages panel (empty: the current page).
                 "selected_pages": v.selected.iter().map(|p| p + 1).collect::<Vec<_>>(),
                 "auto_scrolling": v.auto_scrolling(),
+                "raster_memory": v.raster_memory(),
                 "viewport": [v.viewport_rect().min.x, v.viewport_rect().min.y, v.viewport_rect().max.x, v.viewport_rect().max.y],
                 "find_open": v.find.is_some(),
                 "page_errors": v.page_errors().iter().map(|(p, e)| json!({ "page": p + 1, "error": e })).collect::<Vec<_>>(),
@@ -564,6 +566,17 @@ impl Host for crate::PdfCraftApp {
                 "selected_comment": v.comments.selected.map(|(p, i)| json!({ "page": p + 1, "index": i + 1 })),
                 "comment_composer_open": v.comments.composer.is_some(),
             })),
+            // The Combine files tab: how its files show, and each grid thumbnail's state.
+            "combine": {
+                "showing": self.combine_showing(),
+                "view": self.combine_view.as_str(),
+                "zoom": self.combine_zoom,
+                "files": self.combine_draft.iter().map(|f| f.name.clone()).collect::<Vec<_>>(),
+                "selected": self.combine_selection(),
+                "thumbnails": self.combine_thumbnails().iter().map(|t| format!("{t:?}")).collect::<Vec<_>>(),
+                "expanded": self.combine_expanded().iter().filter_map(|i| self.combine_draft.get(*i).map(|f| f.name.clone())).collect::<Vec<_>>(),
+                "preview": self.combine_preview().map(|(file, page, render)| json!({ "file": file, "page": page + 1, "render": format!("{render:?}") })),
+            },
             "quick_tool": match self.quick_tool {
                 crate::QuickTool::Measure(t) => format!("measure-{}", t.name()),
                 crate::QuickTool::Select => "select".to_string(),
@@ -577,6 +590,7 @@ impl Host for crate::PdfCraftApp {
                 crate::QuickTool::SignArea { certify: true } => "certify".to_string(),
                 crate::QuickTool::MarqueeZoom => "marquee-zoom".to_string(),
                 crate::QuickTool::Snapshot => "snapshot".to_string(),
+                crate::QuickTool::ColumnSelect => "column-select".to_string(),
                 crate::QuickTool::Stamp(k) => format!("stamp-{}", k.name().trim_start_matches("PC").to_ascii_lowercase()),
                 crate::QuickTool::CustomStamp(i) => format!("custom-stamp-{i}"),
                 crate::QuickTool::Fill(f) => format!("fill-{}", f.command().trim_start_matches("sign.fill.")),
@@ -594,6 +608,7 @@ impl Host for crate::PdfCraftApp {
             "theme_preference": self.theme_preference,
             "language": self.language,
             "notice": self.toast.as_ref().map(|t| t.0.clone()),
+            "progress": self.progress_notice.as_ref().map(|p| json!({ "label": p.label, "fraction": p.fraction })),
             "password_prompt": self.password_prompt.is_some(),
             "close_prompt": self.close_request.is_some(),
         })

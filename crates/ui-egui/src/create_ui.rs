@@ -221,27 +221,21 @@ impl PdfCraftApp {
     }
 
     /// Reduce File Size: write a compacted copy with images downsampled (the open document is
-    /// unchanged).
+    /// unchanged). It runs in the background with a progress bar, like the PDF Optimizer.
     pub(crate) fn reduce_file_size(&mut self) {
-        // What's typed in a form field is part of the document (#166).
-        if !self.commit_form_typing() {
-            return;
-        }
-        let Some((_, id)) = self.active_ids() else { return };
-        let result = self.session.reduced_bytes(id).map(|(b, _)| (b, String::new()));
-        self.save_optimized(id, "reduced", result);
+        self.start_optimize(crate::optimize_ui::OptimizeKind::Reduce, &pdfcraft_engine::optimize::Settings::default(), &[]);
     }
 
     /// Save an optimized copy (Reduce File Size, Optimize PDF) next to the original, reporting
-    /// the saving.
+    /// the saving. A Reduce File Size copy that isn't smaller is not saved (#490).
     pub(crate) fn save_optimized(
         &mut self,
         id: pdfcraft_engine::DocId,
-        suffix: &str,
+        kind: crate::optimize_ui::OptimizeKind,
         result: Result<(Arc<Vec<u8>>, String), pdfcraft_engine::EditError>,
     ) {
         let Some(doc) = self.session.get(id) else { return };
-        let (before, name) = (doc.bytes.len(), format!("{} ({suffix}).pdf", stem(&doc.name)));
+        let (before, name) = (doc.bytes.len(), format!("{} ({}).pdf", stem(&doc.name), kind.suffix()));
         let (bytes, detail) = match result {
             Ok(r) => r,
             Err(e) => {
@@ -250,18 +244,28 @@ impl PdfCraftApp {
             }
         };
         let after = bytes.len();
-        let saved = move |app: &mut PdfCraftApp, place: String| {
-            let pct = 100.0 * (1.0 - after as f64 / before.max(1) as f64);
-            app.notify_fmt(
-                "Saved {place}: {before} → {after} ({pct}% smaller){detail}",
-                &[
-                    ("place", &place),
-                    ("before", &crate::panels::human_size(before)),
-                    ("after", &crate::panels::human_size(after)),
-                    ("pct", &format!("{pct:.0}")),
-                    ("detail", &detail),
-                ],
+        if kind == crate::optimize_ui::OptimizeKind::Reduce && after >= before {
+            self.notify_fmt(
+                "This file is already as small as it can be made ({size}). No copy was saved.",
+                &[("size", &crate::panels::human_size(before))],
             );
+            return;
+        }
+        let saved = move |app: &mut PdfCraftApp, place: String| {
+            let (b, a) = (crate::panels::human_size(before), crate::panels::human_size(after));
+            if after < before {
+                let pct = 100.0 * (1.0 - after as f64 / before.max(1) as f64);
+                app.notify_fmt(
+                    "Saved {place}: {before} → {after} ({pct}% smaller){detail}",
+                    &[("place", &place), ("before", &b), ("after", &a), ("pct", &format!("{pct:.0}")), ("detail", &detail)],
+                );
+            } else {
+                // Optimize PDF still saves: what it discards may matter more than the size.
+                app.notify_fmt(
+                    "Saved {place}: {before} → {after} (not smaller){detail}",
+                    &[("place", &place), ("before", &b), ("after", &a), ("detail", &detail)],
+                );
+            }
         };
         #[cfg(not(target_arch = "wasm32"))]
         {
