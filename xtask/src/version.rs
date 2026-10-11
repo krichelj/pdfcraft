@@ -1,12 +1,12 @@
-//! `cargo xtask version [base | set X.Y.Z[-pre] | fork [id] | bump-fork [id]]`: workspace versioning.
+//! `cargo xtask version [base | set X.Y.Z[-pre] | fork [tag] | bump-fork [tag]]`: workspace versioning.
 //!
 //! The version lives in `[workspace.package] version` in the root `Cargo.toml`; every crate
 //! inherits it with `version.workspace = true`, and the packaging scripts read it from here.
 //! Internal path dependencies in `[workspace.dependencies]` also have their `version = "…"`
 //! requirements kept strictly in sync, ensuring `cargo update --workspace` resolves cleanly.
 //!
-//! For downstream forks, an orthogonal SemVer-compliant extension scheme is used:
-//! `<base>-<vendor>.<rev>` (e.g. `0.6.0-krichelj.1`).
+//! For downstream forks, an orthogonal SemVer-compliant patchlevel extension scheme is used:
+//! `<base>-p<N>` (e.g. `0.6.0-p1`, `0.6.0-p2`).
 
 use std::path::Path;
 
@@ -20,29 +20,29 @@ pub fn read(manifest: &str) -> Result<String, String> {
     Ok(v)
 }
 
-/// The upstream base version without any fork or pre-release suffix (e.g. `0.6.0` from `0.6.0-krichelj.1`).
+/// The upstream base version without any fork or pre-release suffix (e.g. `0.6.0` from `0.6.0-p1`).
 pub fn base_version(v: &str) -> &str {
     v.split_once('-').map(|(base, _)| base).unwrap_or(v)
 }
 
-/// Construct a fork version from the current version and vendor identifier.
-pub fn fork_version(current: &str, vendor: &str) -> Result<String, String> {
-    if vendor.is_empty() || !vendor.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-        return Err(format!("`{vendor}` is not a valid vendor identifier (must be alphanumeric or '-')"));
+/// Construct a fork patchlevel version from the current version and tag prefix (default `"p"`).
+pub fn fork_version(current: &str, tag_prefix: &str) -> Result<String, String> {
+    if tag_prefix.is_empty() || !tag_prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err(format!("`{tag_prefix}` is not a valid tag prefix (must be alphanumeric or '-')"));
     }
     let base = base_version(current);
-    let candidate = format!("{base}-{vendor}.1");
+    let candidate = format!("{base}-{tag_prefix}1");
     validate(&candidate)?;
     Ok(candidate)
 }
 
-/// Bump the fork revision (e.g. `0.6.0-krichelj.1` -> `0.6.0-krichelj.2`).
-pub fn bump_fork(current: &str, vendor: &str) -> Result<String, String> {
-    if vendor.is_empty() || !vendor.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-        return Err(format!("`{vendor}` is not a valid vendor identifier"));
+/// Bump the fork revision (e.g. `0.6.0-p1` -> `0.6.0-p2`).
+pub fn bump_fork(current: &str, tag_prefix: &str) -> Result<String, String> {
+    if tag_prefix.is_empty() || !tag_prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err(format!("`{tag_prefix}` is not a valid tag prefix"));
     }
     let base = base_version(current);
-    let prefix = format!("{base}-{vendor}.");
+    let prefix = format!("{base}-{tag_prefix}");
     if let Some(rev_str) = current.strip_prefix(&prefix) {
         if let Ok(rev) = rev_str.parse::<u64>() {
             let candidate = format!("{prefix}{}", rev + 1);
@@ -50,7 +50,7 @@ pub fn bump_fork(current: &str, vendor: &str) -> Result<String, String> {
             return Ok(candidate);
         }
     }
-    let candidate = format!("{base}-{vendor}.1");
+    let candidate = format!("{base}-{tag_prefix}1");
     validate(&candidate)?;
     Ok(candidate)
 }
@@ -174,28 +174,28 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
         }
         ["fork"] => {
             let current = read(&text)?;
-            let new = fork_version(&current, "krichelj")?;
+            let new = fork_version(&current, "p")?;
             set_version(root, &path, &text, &new)
         }
-        ["fork", vendor] => {
+        ["fork", tag_prefix] => {
             let current = read(&text)?;
-            let new = fork_version(&current, vendor)?;
+            let new = fork_version(&current, tag_prefix)?;
             set_version(root, &path, &text, &new)
         }
         ["bump-fork"] => {
             let current = read(&text)?;
-            let new = bump_fork(&current, "krichelj")?;
+            let new = bump_fork(&current, "p")?;
             set_version(root, &path, &text, &new)
         }
-        ["bump-fork", vendor] => {
+        ["bump-fork", tag_prefix] => {
             let current = read(&text)?;
-            let new = bump_fork(&current, vendor)?;
+            let new = bump_fork(&current, tag_prefix)?;
             set_version(root, &path, &text, &new)
         }
         ["set", new] => {
             set_version(root, &path, &text, new)
         }
-        _ => Err("usage: cargo xtask version [base | set X.Y.Z[-pre] | fork [vendor] | bump-fork [vendor]]".into()),
+        _ => Err("usage: cargo xtask version [base | set X.Y.Z[-pre] | fork [tag] | bump-fork [tag]]".into()),
     }
 }
 
@@ -222,9 +222,9 @@ mod tests {
     #[test]
     fn replaces_workspace_and_internal_dependencies() {
         let manifest = "[workspace.package]\nversion = \"0.1.0\"\n\n[workspace.dependencies]\nfoo = { version = \"1\" }\npdfcraft-geom = { path = \"crates/geom\", version = \"0.1.0\" }\n";
-        let out = replace(manifest, "0.2.0-krichelj.1").unwrap();
-        assert!(out.contains("version = \"0.2.0-krichelj.1\""));
-        assert!(out.contains("pdfcraft-geom = { path = \"crates/geom\", version = \"0.2.0-krichelj.1\" }"));
+        let out = replace(manifest, "0.2.0-p1").unwrap();
+        assert!(out.contains("version = \"0.2.0-p1\""));
+        assert!(out.contains("pdfcraft-geom = { path = \"crates/geom\", version = \"0.2.0-p1\" }"));
         assert!(out.contains("foo = { version = \"1\" }"));
     }
 
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn validates_versions() {
-        for ok in ["0.1.0", "1.20.300", "1.0.0-rc.1", "1.0.0-alpha", "1.0.0-x-y.2", "0.6.0-krichelj.1"] {
+        for ok in ["0.1.0", "1.20.300", "1.0.0-rc.1", "1.0.0-alpha", "1.0.0-x-y.2", "0.6.0-p1", "0.6.0-p2"] {
             assert!(validate(ok).is_ok(), "{ok}");
         }
         for bad in ["1.0", "1.0.0.0", "v1.0.0", "01.0.0", "1.0.0-", "1.0.0-a..b", "1.0.0+meta", "1.a.0", ""] {
@@ -249,19 +249,19 @@ mod tests {
     #[test]
     fn computes_base_and_fork_versions() {
         assert_eq!(base_version("0.6.0"), "0.6.0");
-        assert_eq!(base_version("0.6.0-krichelj.1"), "0.6.0");
+        assert_eq!(base_version("0.6.0-p1"), "0.6.0");
         assert_eq!(base_version("1.2.3-rc.2"), "1.2.3");
 
-        assert_eq!(fork_version("0.6.0", "krichelj").unwrap(), "0.6.0-krichelj.1");
-        assert_eq!(fork_version("0.6.0-krichelj.5", "krichelj").unwrap(), "0.6.0-krichelj.1");
+        assert_eq!(fork_version("0.6.0", "p").unwrap(), "0.6.0-p1");
+        assert_eq!(fork_version("0.6.0-p5", "p").unwrap(), "0.6.0-p1");
     }
 
     #[test]
     fn bumps_fork_version() {
-        assert_eq!(bump_fork("0.6.0", "krichelj").unwrap(), "0.6.0-krichelj.1");
-        assert_eq!(bump_fork("0.6.0-krichelj.1", "krichelj").unwrap(), "0.6.0-krichelj.2");
-        assert_eq!(bump_fork("0.6.0-krichelj.9", "krichelj").unwrap(), "0.6.0-krichelj.10");
-        assert_eq!(bump_fork("0.6.0-upstream.1", "krichelj").unwrap(), "0.6.0-krichelj.1");
+        assert_eq!(bump_fork("0.6.0", "p").unwrap(), "0.6.0-p1");
+        assert_eq!(bump_fork("0.6.0-p1", "p").unwrap(), "0.6.0-p2");
+        assert_eq!(bump_fork("0.6.0-p9", "p").unwrap(), "0.6.0-p10");
+        assert_eq!(bump_fork("0.6.0-upstream.1", "p").unwrap(), "0.6.0-p1");
     }
 
     #[test]

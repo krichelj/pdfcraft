@@ -19,14 +19,14 @@ do not edit, fix, build or run them here, and take upstream's versions on every 
 3. Verify quality gates: `cargo check --all-targets && cargo xtask assets`.
 4. Push to `origin main`.
 
-## Fork rule: Orthogonal fork versioning (`<upstream>-<vendor>.<rev>`)
-**IRONCLAD (owner, 2026-10-10): All releases and builds in this fork must use an orthogonal downstream version tag extending upstream's base version.**
-- **Format**: `<base>-<vendor>.<rev>` (e.g. `0.6.0-krichelj.1`). Follows SemVer 2.0.0 Rule 9 and packaging conventions.
+## Fork rule: Orthogonal fork versioning (`<upstream>-p<N>`)
+**IRONCLAD (owner, 2026-10-10): All releases and builds in this fork must use an orthogonal downstream patchlevel tag extending upstream's base version.**
+- **Format**: `<base>-p<N>` (e.g. `0.6.0-p1`, `0.6.0-p2`). Follows standard open-source patchlevel conventions and SemVer 2.0.0 Rule 9 without personal developer handles.
 - **Single Source of Truth**: Managed exclusively via `cargo xtask version`:
-  - `cargo xtask version`: Displays current workspace version (e.g. `0.6.0-krichelj.1`).
+  - `cargo xtask version`: Displays current workspace version (e.g. `0.6.0-p1`).
   - `cargo xtask version base`: Displays upstream base version (e.g. `0.6.0`).
-  - `cargo xtask version fork [vendor]`: Initializes or aligns fork version to `<base>-<vendor>.1` (default vendor `krichelj`).
-  - `cargo xtask version bump-fork [vendor]`: Increments fork revision (`0.6.0-krichelj.1` -> `0.6.0-krichelj.2`).
+  - `cargo xtask version fork [tag]`: Initializes fork version to `<base>-<tag>1` (default tag `p` -> `0.6.0-p1`).
+  - `cargo xtask version bump-fork [tag]`: Increments fork patchlevel (`0.6.0-p1` -> `0.6.0-p2`).
   - `cargo xtask version set <version>`: Explicit version assignment.
 - **Cargo Invariant**: Root `[workspace.package] version` and all internal `pdfcraft-*` path dependencies in `[workspace.dependencies]` are synchronized simultaneously to ensure `cargo update --workspace` resolves cleanly.
 
