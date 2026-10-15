@@ -1,4 +1,6 @@
-# PdfCraft — instructions for agents
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 PdfCraft is a clean-room, open-source, Rust-native PDF application targeting Adobe Acrobat Pro parity. It runs natively on macOS, Windows, Linux and FreeBSD, and on the web via WASM. It is the sibling of `../photocraft` (a Photoshop-class editor) and follows the same conventions.
 
@@ -42,7 +44,7 @@ do not edit, fix, build or run them here, and take upstream's versions on every 
 2. Read that task in `plan/execution-plan.md` §3, the relevant section of `plan/architecture.md`, and the README of the crate you're touching.
 3. Follow the **autonomous operation protocol** in `plan/execution-plan.md` §7 (orient → plan → implement + test → verify → record → commit). Don't stop to ask unless §7 lists the decision as the user's.
 
-`plan/` is gitignored (local-only, like PhotoCraft). The machine-readable parity checklist lives in `parity/` (committed).
+`plan/` is gitignored (local-only, like PhotoCraft) and may be absent in a fresh checkout; if so, fall back to `ROADMAP.md` and `parity/`, and say so. The machine-readable parity checklist lives in `parity/` (committed).
 
 ## Non-negotiables
 - **Assets: read `AGENTS.md` §1 before adding or showing any icon, image, font or document.** No assets from Adobe products, ever. Only openly licensed or contributor-original assets are allowed, each with an entry in `ATTRIBUTION.toml`. `cargo xtask assets` enforces this. `AGENTS.md` overrides this file.
@@ -64,8 +66,19 @@ do not edit, fix, build or run them here, and take upstream's versions on every 
   - No `unsafe` (`unsafe_code = "forbid"`).
   - Every crash fix gets a synthetic regression test. See `AGENTS.md` §4 (and, for team members, the internal `craftrules/standards/never-crash.md`).
 - **Rust only** in the product and build (`xtask`). No handwritten JS/TS.
-- **Quality gates** before every commit: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace`, and the wasm check once `xtask ci` exists (M0).
+- **Quality gates** before every commit: `cargo xtask ci` (fmt --check, clippy `-D warnings`, test, layers, wasm, assets, deny, parity; stops at the first failure). CI runs clippy with `--all-targets`, so do too.
 - **Commits:** one task id per commit (e.g. `M1.4: xref stream reader`). Commit only green states. End messages with the attribution line required by the environment.
+
+## Commands
+- Single crate / single test: `cargo test -p pdfcraft-cos`, `cargo test -p pdfcraft-cos <name_filter>`, `cargo test -p pdfcraft-ui-egui --test control`.
+- Individual gates: `cargo xtask layers`, `cargo xtask wasm`, `cargo xtask assets [--write]`, `cargo xtask deny` (needs cargo-deny), `cargo check -p pdfcraft-cli --no-default-features` (build without the MCP server).
+- Corpus: `cargo xtask corpus` fetches pdf.js test files into `corpus/`; `cargo xtask check` sweeps them against `xtask/baselines`; `cargo xtask text-oracle` compares text extraction with pdftotext.
+- `cargo xtask` with no args lists every command (`xtask/src/main.rs`). `cargo xtask version set X.Y.Z` bumps the workspace version.
+
+## Architecture
+- Workspace: `crates/*` (libraries, all named `pdfcraft-<dir>`), `apps/pdfcraft` (desktop), `apps/pdfcraft-cli` (headless runner + MCP), `apps/pdfcraft-web` (Trunk/WASM, not a default member), `xtask`. `vendor/` is excluded from the workspace.
+- Layers are enforced by `cargo xtask layers` from the table in `xtask/src/layers.rs`: L0-1 standalone (`geom`, `filters`, `crypt`, `arlington`, `cos`) → L2 object model (`model`, `content`, `fonts`) → L3 (`render`, `annot`, `forms`, `js`, `xfa`) → L4 features (`edit`, `organize`, `redact`, `sign`, `ocr`, `export`, ...) → L5 interaction → L6 `engine` → L7 frontends (`ui-egui`, `automation`). A crate may depend only on lower layers; adding a crate means adding it to that table.
+- `pdfcraft-engine` is the façade every frontend uses (sessions, edits, undo, save, tool catalogue). The UI and `pdfcraft-automation` both drive it, so engine features are testable headlessly via `pdfcraft-cli run`.
 
 ## Running and looking at the app
 - `cargo run -p pdfcraft -- <file.pdf>` opens the desktop app.
