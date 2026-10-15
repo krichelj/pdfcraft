@@ -838,7 +838,11 @@ fn files_and_quit_from_the_operating_system() {
     std::fs::write(&path, FIXTURE).unwrap();
     let queue = std::rc::Rc::new(std::cell::RefCell::new(vec![OsEvent::Open(vec![path.to_string_lossy().into_owned()])]));
     let q = queue.clone();
-    let mut h = harness(move |app| app.os_events = Some(Box::new(move || q.borrow_mut().drain(..).collect())));
+    let mut h = harness(move |app| {
+        // Open on the test's thread: on a loaded machine the worker can miss the fixed frames.
+        app.run_inline = true;
+        app.os_events = Some(Box::new(move || q.borrow_mut().drain(..).collect()));
+    });
     std::fs::remove_file(&path).ok();
     assert_eq!(h.state().views.len(), 1, "the file opens in a tab");
     h.get_by_label_contains(&name);
