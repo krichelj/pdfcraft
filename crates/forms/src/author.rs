@@ -1,8 +1,9 @@
 //! Prepare a form: create, change and delete fields (execution plan M6.6).
 //!
 //! New fields follow Acrobat's conventions: names "Text1", "Check Box1", "Group1" (radio groups),
-//! "Dropdown1", "List Box1", "Button1", "Signature1", "Date1"; 12 pt Helvetica (auto-size for
-//! check boxes), a thin grey border and a white background, and appearance streams generated
+//! "Dropdown1", "List Box1", "Button1", "Signature1", "Date1"; Helvetica at Acrobat's Auto size
+//! for text and date fields (12 pt in a box that has room, smaller in a short one), 12 pt in
+//! choice fields, a thin grey border and a white background, and appearance streams generated
 //! immediately so every viewer shows the empty field.
 
 use pdfcraft_cos::{Dict, Document, ObjRef, Object, PdfString, Stream};
@@ -545,14 +546,15 @@ pub fn add_field(doc: &mut Document, page: usize, rect: [f64; 4], kind: &NewFiel
     match kind {
         NewField::Text { multiline } => {
             w.set(b"FT".to_vec(), Object::name("Tx"));
-            w.set(b"DA".to_vec(), PdfString::literal(b"/Helv 12 Tf 0 g".to_vec()));
+            // Auto size (0): a fixed 12 pt is clipped in a box shorter than that (#1888).
+            w.set(b"DA".to_vec(), PdfString::literal(b"/Helv 0 Tf 0 g".to_vec()));
             if *multiline {
                 w.set(b"Ff".to_vec(), Object::Int(flags::MULTILINE as i64));
             }
         }
         NewField::Date => {
             w.set(b"FT".to_vec(), Object::name("Tx"));
-            w.set(b"DA".to_vec(), PdfString::literal(b"/Helv 12 Tf 0 g".to_vec()));
+            w.set(b"DA".to_vec(), PdfString::literal(b"/Helv 0 Tf 0 g".to_vec()));
             // Acrobat's format and keystroke actions for mm/dd/yyyy (run by its JavaScript engine).
             let js = |s: &str| {
                 let mut a = Dict::new();
@@ -655,6 +657,7 @@ pub fn add_field(doc: &mut Document, page: usize, rect: [f64; 4], kind: &NewFiel
                 locked: false,
                 hidden: false,
                 rotation: 0,
+                list: None,
             };
             let ap = appearance::check_box_states(doc, &w, FieldKind::Radio, export);
             doc.update_dict(widget, |d| d.set(b"AP".to_vec(), Object::Dict(ap)))?;
@@ -669,13 +672,19 @@ pub fn add_field(doc: &mut Document, page: usize, rect: [f64; 4], kind: &NewFiel
     Ok(field_name)
 }
 
-/// Regenerate every widget appearance of a field from its current value and settings.
+/// Regenerate every widget appearance of a field from its current value and settings. A value or
+/// button caption its font can't hold is drawn with `?` for those characters, the widget is marked
+/// (`pdfcraft_fonts::UNDRAWN_MARK`) and other viewers are asked to redraw the form (see
+/// `ask_viewers_to_redraw`), as when a value is set.
 pub fn redraw_field(doc: &mut Document, name: &str) -> Result<(), FormError> {
     let f = fields(doc).into_iter().find(|f| f.name == name).ok_or_else(|| FormError::NoSuchField(name.into()))?;
+    let mut undrawn = false;
     for w in &f.widgets {
+        let mut missing = None;
         let ap = match f.kind {
             FieldKind::Text | FieldKind::Combo | FieldKind::List => {
-                let s = appearance::field_appearance(doc, &f, w, &f.value);
+                let (s, m) = appearance::field_appearance_drawn(doc, &f, w, &f.value, true);
+                missing = m;
                 let r = doc.add(Object::Stream(s));
                 let mut d = Dict::new();
                 d.set(b"N".to_vec(), Object::Ref(r));
@@ -686,7 +695,8 @@ pub fn redraw_field(doc: &mut Document, name: &str) -> Result<(), FormError> {
                 appearance::check_box_states(doc, w, f.kind, &on)
             }
             FieldKind::PushButton => {
-                let s = button_appearance(doc, w);
+                let (s, m) = button_appearance(doc, w);
+                missing = m;
                 let r = doc.add(Object::Stream(s));
                 let mut d = Dict::new();
                 d.set(b"N".to_vec(), Object::Ref(r));
@@ -700,8 +710,15 @@ pub fn redraw_field(doc: &mut Document, name: &str) -> Result<(), FormError> {
                 d
             }
         };
+        undrawn |= missing.is_some();
         let existing = crate::merged_appearance(doc, w.obj, &ap);
-        doc.update_dict(w.obj, |d| d.set(b"AP".to_vec(), Object::Dict(existing)))?;
+        doc.update_dict(w.obj, |d| {
+            d.set(b"AP".to_vec(), Object::Dict(existing));
+            pdfcraft_fonts::set_undrawn_mark(d, missing);
+        })?;
+    }
+    if undrawn {
+        crate::ask_viewers_to_redraw(doc)?;
     }
     Ok(())
 }
@@ -737,8 +754,9 @@ fn form_stream(place: crate::appearance::Placement, content: Vec<u8>, resources:
 }
 
 /// A push button: background, border, its icon (`/MK /I`, scaled to fit and centred) and its
-/// centred caption (unless the layout is icon only, `/TP 1`).
-fn button_appearance(doc: &Document, w: &Widget) -> Stream {
+/// centred caption (unless the layout is icon only, `/TP 1`). The caption is drawn in Helvetica,
+/// with the first character it can't draw (drawn as `?`), for the caller to mark and report.
+fn button_appearance(doc: &Document, w: &Widget) -> (Stream, Option<char>) {
     let (mut c, place) = frame_only(doc, w);
     let (width, height) = (place.layout_w, place.layout_h);
     let wobj = doc.get(w.obj);
@@ -762,7 +780,9 @@ fn button_appearance(doc: &Document, w: &Widget) -> Stream {
             xobjects.set(b"Icon".to_vec(), Object::Ref(icon));
         }
     }
+    let mut missing = None;
     if !icon_only && !caption.is_empty() {
+        missing = pdfcraft_fonts::first_undrawable(&caption);
         let size = ((height - 4.0) * 0.6).clamp(4.0, 14.0);
         let tw = helvetica_width(&caption, size);
         content.extend(format!("BT /Helv {size:.2} Tf 0 g 1 0 0 1 {:.3} {:.3} Tm ", (width - tw) / 2.0, (height - size * 0.7) / 2.0).bytes());
@@ -781,7 +801,7 @@ fn button_appearance(doc: &Document, w: &Widget) -> Stream {
     if !xobjects.is_empty() {
         res.set(b"XObject".to_vec(), Object::Dict(xobjects));
     }
-    form_stream(place, content, res)
+    (form_stream(place, content, res), missing)
 }
 
 /// Give a push button (an image field) the picture `image` (an image XObject of `px` pixels):
@@ -1016,8 +1036,9 @@ pub fn set_props(doc: &mut Document, name: &str, props: &FieldProps) -> Result<S
     if let Some(l) = &props.look {
         let arr = |c: [f64; 3]| Object::Array(c.iter().map(|v| Object::Real(v.clamp(0.0, 1.0))).collect());
         for w in &f.widgets {
+            // Resolved first: an indirect /MK keeps its mark, rotation and other entries.
+            let mut mk = doc.get(w.obj).as_dict().and_then(|d| d.get(b"MK").map(|m| doc.resolve(m).as_dict().cloned())).flatten().unwrap_or_default();
             doc.update_dict(w.obj, |d| {
-                let mut mk = d.get(b"MK").and_then(|m| m.as_dict().cloned()).unwrap_or_default();
                 match l.border {
                     Some(c) => mk.set(b"BC".to_vec(), arr(c)),
                     None => {

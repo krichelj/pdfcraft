@@ -124,6 +124,32 @@ fn text_is_wrapped_and_paginated() {
     assert!(content(p.last().unwrap()).contains("(After a form feed) Tj"), "a form feed starts a page");
 }
 
+/// Text Helvetica can't draw is refused with its line and character, never set as `?`; text
+/// PdfCraft generates writes such characters as [U+XXXX] and says so.
+#[test]
+fn text_helvetica_cannot_draw_is_refused_or_escaped() {
+    let err = from_text("notes", "Café —\tok\r\n\u{c}第二页 notes", LETTER, 11.0).unwrap_err();
+    let CreateError::Invalid(msg) = &err else { panic!("{err:?}") };
+    assert!(msg.contains("(line 2)") && msg.contains("\"第\" (U+7B2C)") && msg.contains("Western European"), "{msg}");
+    // Western European text, tabs, CRLF and form feeds included, still converts.
+    from_text("notes", "Café —\tok\r\n\u{c}Seite zwei: Grüße", LETTER, 11.0).unwrap();
+    let (doc, escaped) = from_text_escaped("Summary of Comments on 报告.pdf", "Comment: 签名 ok\nPage 2", LETTER, 11.0).unwrap();
+    assert_eq!(escaped, 2);
+    let doc = reopen(&doc);
+    let p = pages(&doc);
+    let c = doc.resolve(p[0].get(b"Contents").unwrap());
+    let Object::Stream(s) = &*c else { panic!() };
+    let shown = String::from_utf8_lossy(&s.decoded().unwrap()).into_owned();
+    assert!(shown.contains("(Comment: [U+7B7E][U+540D] ok) Tj") && shown.contains(&format!("({ESCAPED_NOTE}) Tj")), "{shown}");
+    assert!(!shown.contains('?'), "{shown}");
+    // Nothing to escape: no note.
+    let (doc, escaped) = from_text_escaped("r", "Plain report", LETTER, 11.0).unwrap();
+    assert_eq!(escaped, 0);
+    let p = pages(&doc);
+    let Object::Stream(s) = &*doc.resolve(p[0].get(b"Contents").unwrap()) else { panic!() };
+    assert!(!String::from_utf8_lossy(&s.decoded().unwrap()).contains("U+XXXX"));
+}
+
 fn image_of(doc: &Document, page: usize) -> Dict {
     let p = &pages(doc)[page];
     let res = doc.resolve(p.get(b"Resources").unwrap()).as_dict().cloned().unwrap();
@@ -196,6 +222,64 @@ fn a_tiff_claiming_enormous_dimensions_is_refused() {
     assert_eq!(tif.len(), 122);
     tif.push(0);
     assert!(matches!(from_images(&[("huge.tif".into(), tif)]), Err(CreateError::Image(..))));
+}
+
+/// A PNG of a few bytes whose header claims `w`×`h` 8-bit RGBA pixels, with no pixel data.
+fn png_claiming(w: u32, h: u32) -> Vec<u8> {
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut c = !0u32;
+        for &b in bytes {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+        }
+        !c
+    }
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut chunk = |kind: &[u8], data: &[u8]| {
+        png.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let body = [kind, data].concat();
+        png.extend_from_slice(&body);
+        png.extend_from_slice(&crc32(&body).to_be_bytes());
+    };
+    let ihdr = [&w.to_be_bytes()[..], &h.to_be_bytes(), &[8, 6, 0, 0, 0]].concat();
+    chunk(b"IHDR", &ihdr);
+    // An empty zlib stream: one stored block of no bytes.
+    chunk(b"IDAT", &[0x78, 0x01, 0x01, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01]);
+    chunk(b"IEND", &[]);
+    png
+}
+
+#[test]
+fn a_tiny_png_claiming_huge_dimensions_is_refused_before_allocating() {
+    // 68 bytes claiming 13 GiB (and 1 TiB) of pixels: refused before anything is allocated,
+    // where it used to abort the process when the allocation failed.
+    for (w, h) in [(60_000, 60_000), (1 << 20, 1 << 18)] {
+        let png = png_claiming(w, h);
+        assert_eq!(png.len(), 68);
+        let r = from_images(&[("huge.png".into(), png)]);
+        assert!(matches!(&r, Err(CreateError::Image(_, m)) if m.contains("too large")), "{w}x{h}");
+    }
+}
+
+/// Likewise a PNG: the png crate's limits don't cover the frame buffer, which its header sizes
+/// (60000x60000 RGBA is 14.4 GB). Refused before anything is allocated, not after.
+#[test]
+fn a_png_claiming_enormous_dimensions_is_refused() {
+    let mut png = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png, 60_000, 60_000);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().unwrap();
+        // A zlib stream holding one zero byte: far too little data, but a well-formed start.
+        w.write_chunk(png::chunk::IDAT, &[0x78, 0x01, 0x01, 0x01, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x01, 0x00, 0x01]).unwrap();
+    }
+    match from_images(&[("huge.png".into(), png)]) {
+        Err(CreateError::Image(_, m)) => assert!(m.contains("too large"), "{m}"),
+        other => panic!("expected a refusal, got {:?}", other.map(|_| ())),
+    }
 }
 
 #[test]
@@ -324,6 +408,28 @@ fn source_kind_tells_pdfs_images_and_text_apart() {
     assert_eq!(source_kind("b.bmp", b"BM"), None);
     assert_eq!(source_kind("a.docx", b"PK\x03\x04"), None);
     assert_eq!(source_kind("", b""), None);
+    // Only the GIF versions Create decodes count as images, so detection never promises a
+    // conversion that then fails.
+    assert_eq!(source_kind("a.gif", b"GIF8x not a gif"), None);
+    assert_eq!(source_kind("notes.txt", b"GIF8 is a word here"), Some(SourceKind::Text));
+}
+
+/// BigTIFF (version 43, used for large scans) is detected and converted like a classic TIFF.
+#[test]
+fn bigtiff_images_become_pages() {
+    let mut tif = std::io::Cursor::new(Vec::new());
+    {
+        let mut enc = tiff::encoder::TiffEncoder::new_big(&mut tif).unwrap();
+        let mut im = enc.new_image::<tiff::encoder::colortype::Gray8>(4, 2).unwrap();
+        im.resolution(tiff::tags::ResolutionUnit::Inch, tiff::encoder::Rational { n: 144, d: 1 });
+        im.write_data(&[128; 8]).unwrap();
+    }
+    let tif = tif.into_inner();
+    assert!(tif.starts_with(b"II+\0"), "the encoder wrote a BigTIFF");
+    assert_eq!(source_kind("scan.tif", &tif), Some(SourceKind::Image));
+    let doc = reopen(&from_images(&[("scan.tif".into(), tif)]).unwrap());
+    assert_eq!(pages(&doc).len(), 1);
+    assert_eq!(media(&pages(&doc)[0]), [0.0, 0.0, 2.0, 1.0], "4×2 px at 144 dpi");
 }
 
 /// A synthetic ICC profile: a 128-byte header (size, device class, colour space, `acsp`) and
@@ -635,5 +741,211 @@ fn damaged_masks_and_sizes_never_panic() {
         let r = xo.iter().next().map(|(_, v)| v.as_ref().unwrap()).unwrap();
         let _ = extract_images(&doc, &[0], 0);
         let _ = image_file(&doc, r);
+    }
+}
+
+#[test]
+fn indexed_image_export_clamps_samples_to_hival() {
+    for palette in [vec![255, 0, 0, 0, 0, 255], vec![255, 0, 0, 0, 0, 255, 0, 255, 0, 255, 255, 255]] {
+        let mut doc = from_images(&[("flat.png".into(), png_bytes(false))]).unwrap();
+        let page = pdfcraft_model::pages(&doc)[0].clone();
+        let res = doc.resolve(page.dict.get(b"Resources").unwrap()).as_dict().cloned().unwrap();
+        let xo = doc.resolve(res.get(b"XObject").unwrap()).as_dict().cloned().unwrap();
+        let image = xo.iter().next().unwrap().1.as_ref().unwrap();
+        let mut dict = Dict::new();
+        dict.set(b"Type".to_vec(), Object::name("XObject"));
+        dict.set(b"Subtype".to_vec(), Object::name("Image"));
+        dict.set(b"Width".to_vec(), Object::Int(4));
+        dict.set(b"Height".to_vec(), Object::Int(1));
+        dict.set(b"BitsPerComponent".to_vec(), Object::Int(2));
+        dict.set(
+            b"ColorSpace".to_vec(),
+            Object::Array(vec![Object::name("Indexed"), Object::name("DeviceRGB"), Object::Int(1), Object::String(PdfString::literal(palette))]),
+        );
+        // Default Decode preserves sample values0,1,2,3. Values2 and3 clamp to hival1.
+        doc.set(image, Object::Stream(Stream::from_raw(dict, vec![0b0001_1011])));
+        let out = extract_images(&doc, &[0], 0);
+        assert!(out.skipped.is_empty(), "{:?}", out.skipped);
+        assert_eq!(out.images.len(), 1);
+        assert_eq!(exported_png_pixels(&out.images[0].data), vec![255, 0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 255]);
+    }
+}
+
+fn exported_png_pixels(bytes: &[u8]) -> Vec<u8> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder.read_info().unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut pixels).unwrap();
+    pixels.truncate(info.buffer_size());
+    pixels
+}
+
+fn indexed_export_fixture(
+    hival: Object,
+    palette: Vec<u8>,
+    stream_table: bool,
+    indirect_hival: bool,
+    bpc: i64,
+    samples: Vec<u8>,
+) -> (Document, pdfcraft_cos::ObjRef) {
+    let mut doc = from_images(&[("flat.png".into(), png_bytes(false))]).unwrap();
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let res = doc.resolve(page.dict.get(b"Resources").unwrap()).as_dict().cloned().unwrap();
+    let xo = doc.resolve(res.get(b"XObject").unwrap()).as_dict().cloned().unwrap();
+    let image = xo.iter().next().unwrap().1.as_ref().unwrap();
+    let table = if stream_table {
+        Object::Ref(doc.add(Object::Stream(Stream::flate(Dict::new(), &palette))))
+    } else {
+        Object::String(PdfString::literal(palette))
+    };
+    let hival = if indirect_hival { Object::Ref(doc.add(hival)) } else { hival };
+    let mut dict = Dict::new();
+    dict.set(b"Type".to_vec(), Object::name("XObject"));
+    dict.set(b"Subtype".to_vec(), Object::name("Image"));
+    dict.set(b"Width".to_vec(), Object::Int(4));
+    dict.set(b"Height".to_vec(), Object::Int(1));
+    dict.set(b"BitsPerComponent".to_vec(), Object::Int(bpc));
+    dict.set(b"ColorSpace".to_vec(), Object::Array(vec![Object::name("Indexed"), Object::name("DeviceRGB"), hival, table]));
+    doc.set(image, Object::Stream(Stream::from_raw(dict, samples)));
+    (doc, image)
+}
+
+#[test]
+fn indexed_hival_resolves_indirect_values_and_stream_palettes() {
+    for (bpc, samples) in [(2, vec![0x1b]), (4, vec![0x01, 0x23]), (8, vec![0, 1, 2, 255])] {
+        let (doc, image) = indexed_export_fixture(Object::Int(1), vec![255, 0, 0, 0, 0, 255], true, true, bpc, samples);
+        let (ext, bytes) = crate::extract::image_file(&doc, image).unwrap();
+        assert_eq!(ext, "png");
+        assert_eq!(exported_png_pixels(&bytes), vec![255, 0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 255]);
+    }
+}
+
+#[test]
+fn indexed_hival_boundary_values_keep_valid_palette_entries() {
+    let palette: Vec<u8> = (0..=255u8).flat_map(|i| [i, 255 - i, 17]).collect();
+    for high in [0, 255] {
+        let (doc, image) = indexed_export_fixture(Object::Int(high), palette.clone(), false, false, 8, vec![0, 1, 254, 255]);
+        let (_, bytes) = crate::extract::image_file(&doc, image).unwrap();
+        let expected: Vec<u8> = [0u8, 1, 254, 255]
+            .into_iter()
+            .flat_map(|i| {
+                let i = i.min(high as u8);
+                [i, 255 - i, 17]
+            })
+            .collect();
+        assert_eq!(exported_png_pixels(&bytes), expected);
+    }
+}
+
+#[test]
+fn indexed_hival_rejects_invalid_values_without_panicking() {
+    for high in [Object::Int(-1), Object::Int(256), Object::Real(1.0), Object::Null, Object::name("bad")] {
+        let (doc, image) = indexed_export_fixture(high, vec![255, 0, 0], false, false, 8, vec![0; 4]);
+        assert!(crate::extract::image_file(&doc, image).unwrap_err().contains("invalid hival"));
+        let out = extract_images(&doc, &[0], 0);
+        assert!(out.images.is_empty());
+        assert_eq!(out.skipped.len(), 1);
+        assert!(out.skipped[0].2.contains("invalid hival"));
+    }
+}
+
+#[test]
+fn indexed_hival_clamping_preserves_raw_colour_key_mask_samples() {
+    let (mut doc, image) = indexed_export_fixture(Object::Int(1), vec![255, 0, 0, 0, 0, 255], false, false, 2, vec![0x1b]);
+    let Object::Stream(mut stream) = (*doc.get(image)).clone() else { panic!("image stream") };
+    stream.dict.set(b"Mask".to_vec(), Object::Array(vec![Object::Int(2), Object::Int(2)]));
+    doc.set(image, Object::Stream(stream));
+    let (_, bytes) = crate::extract::image_file(&doc, image).unwrap();
+    assert_eq!(exported_png_pixels(&bytes), vec![255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 0, 255, 255]);
+}
+
+#[test]
+fn indexed_hival_missing_element_returns_export_error() {
+    let (mut doc, image) = indexed_export_fixture(Object::Int(1), vec![255, 0, 0], false, false, 8, vec![0; 4]);
+    let Object::Stream(mut stream) = (*doc.get(image)).clone() else { panic!("image stream") };
+    stream.dict.set(b"ColorSpace".to_vec(), Object::Array(vec![Object::name("Indexed"), Object::name("DeviceRGB")]));
+    doc.set(image, Object::Stream(stream));
+    assert!(crate::extract::image_file(&doc, image).unwrap_err().contains("invalid hival"));
+}
+
+#[test]
+fn indexed_hival_keeps_existing_short_palette_fallback() {
+    let (doc, image) = indexed_export_fixture(Object::Int(1), vec![255, 0, 0], false, false, 2, vec![0x1b]);
+    let (_, bytes) = crate::extract::image_file(&doc, image).unwrap();
+    assert_eq!(exported_png_pixels(&bytes), vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+}
+
+/// An 8×8 baseline JPEG of one flat colour with four components, stored as `samples`, and an
+/// Adobe APP14 segment with `transform` (0: CMYK, 2: YCCK).
+fn flat_four_component_jpeg(samples: [u8; 4], transform: u8) -> Vec<u8> {
+    fn put(bits: &mut Vec<bool>, value: u32, n: u32) {
+        bits.extend((0..n).rev().map(|i| value >> i & 1 == 1));
+    }
+    let mut v = vec![0xFF, 0xD8];
+    v.extend_from_slice(&[0xFF, 0xEE, 0, 14, b'A', b'd', b'o', b'b', b'e', 0, 100, 0, 0, 0, 0, transform]);
+    v.extend_from_slice(&[0xFF, 0xDB, 0, 67, 0]);
+    v.extend_from_slice(&[1; 64]);
+    v.extend_from_slice(&[0xFF, 0xC0, 0, 20, 8, 0, 8, 0, 8, 4]);
+    for id in 1..=4 {
+        v.extend_from_slice(&[id, 0x11, 0]);
+    }
+    // DC table: categories 0 to 11 with four-bit codes equal to the category. AC table: EOB, "0".
+    v.extend_from_slice(&[0xFF, 0xC4, 0, 31, 0x00, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    v.extend(0..12u8);
+    v.extend_from_slice(&[0xFF, 0xC4, 0, 20, 0x10, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    v.extend_from_slice(&[0xFF, 0xDA, 0, 14, 4, 1, 0, 2, 0, 3, 0, 4, 0, 0, 63, 0]);
+    let mut bits = Vec::new();
+    for s in samples {
+        // With every quantiser 1, a flat block's DC coefficient is 8 × (sample − 128).
+        let dc = (i32::from(s) - 128) * 8;
+        let category = 32 - dc.unsigned_abs().leading_zeros();
+        put(&mut bits, category, 4);
+        put(&mut bits, if dc < 0 { (dc + (1 << category) - 1) as u32 } else { dc as u32 }, category);
+        put(&mut bits, 0, 1);
+    }
+    bits.resize(bits.len().div_ceil(8) * 8, true);
+    for byte in bits.chunks(8).map(|b| b.iter().fold(0u8, |a, &x| a << 1 | u8::from(x))) {
+        v.push(byte);
+        if byte == 0xFF {
+            v.push(0);
+        }
+    }
+    v.extend_from_slice(&[0xFF, 0xD9]);
+    v
+}
+
+#[test]
+fn cmyk_and_ycck_jpegs_export_in_the_colours_the_page_shows() {
+    // Issue #1640: in a PDF a CMYK JPEG's samples are ink amounts, inverted only by its /Decode,
+    // while JPEG decoders and image viewers read them inverted (Adobe's convention for files).
+    // Exported cyan came out red. YCCK samples (Y 179, Cb 171, Cr 1) are cyan ink too.
+    let inverting = Object::Array([1, 0, 1, 0, 1, 0, 1, 0].map(Object::Int).to_vec());
+    for (what, samples, transform, decode, masked) in [
+        ("CMYK", [255, 0, 0, 0], 0, None, true),
+        ("YCCK", [179, 171, 1, 0], 2, None, true),
+        ("inverted CMYK with an inverting /Decode", [0, 255, 255, 255], 0, Some(&inverting), true),
+        ("CMYK without a mask", [255, 0, 0, 0], 0, None, false),
+        ("inverted CMYK with an inverting /Decode, without a mask", [0, 255, 255, 255], 0, Some(&inverting), false),
+    ] {
+        let jpeg = flat_four_component_jpeg(samples, transform);
+        let mut doc = from_images(&[("flat.png".into(), png_bytes(false))]).unwrap();
+        with_image(&mut doc, |doc| {
+            let mut d = image_dict(8, 8, "DeviceCMYK", 8);
+            d.set(b"Filter".to_vec(), Object::name("DCTDecode"));
+            if let Some(decode) = decode {
+                d.set(b"Decode".to_vec(), decode.clone());
+            }
+            if masked {
+                let m = doc.add(Object::Stream(Stream::from_raw(image_dict(8, 8, "DeviceGray", 8), vec![255; 64])));
+                d.set(b"SMask".to_vec(), Object::Ref(m));
+            }
+            Stream::from_raw(d, jpeg.clone())
+        });
+        let (ext, rgba) = exported_rgba(&doc);
+        assert!(rgba.as_chunks::<4>().0.iter().all(|p| p[0] <= 6 && p[1] >= 249 && p[2] >= 249), "{what}: {:?}", &rgba[..4]);
+        if decode.is_some() && !masked {
+            // Inverted like an image file expects: still written as is.
+            assert_eq!((ext, &extract_images(&doc, &[0], 0).images[0].data), ("jpg", &jpeg), "{what}");
+        }
     }
 }

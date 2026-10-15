@@ -23,8 +23,11 @@ jobs:
   test:
     name: test (Linux)
     runs-on: [self-hosted, linux]
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Saturate host threads (saturate-the-bottleneck)
         run: |
@@ -40,26 +43,32 @@ jobs:
       # The optional craft-fonts build input (Japanese fonts), so the Japanese font tests run on
       # Linux; Windows tests the build without it. See craftrules standards/fonts.md.
       - name: Check out craft-fonts (Linux)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: storytold/craft-fonts
-          ref: 8dcdacd5153e64560d109541a47d806f26f048c0
+          ref: 3d9ab3a132ed0eff457e424226a435a901da30d3
           path: craft-fonts
 
       # own-ci-runners: jobs never sudo; the owner installs host packages, the job checks them.
-      - name: Check Linux system dependencies (egui/winit/rfd)
+      # qpdf and poppler-utils are the independent oracles (crates/oracle).
+      - name: Check Linux system dependencies (egui/winit/rfd) and the oracles
         run: |
-          for p in libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev; do
+          for p in libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev qpdf poppler-utils; do
             dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'ok installed' \
-              || { echo "::error::$p missing on $(hostname): see own-ci-runners"; exit 1; }
+              || { echo "::error::$p missing on the runner: see own-ci-runners"; exit 1; }
           done
 
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+      # The independent oracles (crates/oracle) are only worth having when they run. With this
+      # set, a missing one fails the job instead of printing a skip notice that reads as a pass.
+      - name: Require the oracles
+        run: echo "PDFCRAFT_ORACLES_REQUIRED=1" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
 
@@ -76,6 +85,7 @@ jobs:
         run: cargo test --workspace
 
       - name: Layering
+        if: runner.os == 'Linux'
         run: cargo xtask layers
 
       - name: Assets (licences and attribution)
@@ -88,7 +98,7 @@ jobs:
     name: wasm32 check
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Saturate host threads (saturate-the-bottleneck)
         run: |
           NPROC=$(nproc)
@@ -97,11 +107,11 @@ jobs:
             echo "CARGO_BUILD_JOBS=${JOBS}"
             echo "RAYON_NUM_THREADS=${JOBS}"
           } >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: wasm32
           cache-bin: false
@@ -112,7 +122,7 @@ jobs:
     name: dependency licences and advisories
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -122,7 +132,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Saturate host threads (saturate-the-bottleneck)
         run: |
           NPROC=$(nproc)
@@ -131,10 +141,10 @@ jobs:
             echo "CARGO_BUILD_JOBS=${JOBS}"
             echo "RAYON_NUM_THREADS=${JOBS}"
           } >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: fuzz
           cache-bin: false
@@ -144,7 +154,7 @@ jobs:
         run: cargo xtask fuzz --time 900 --seed ${{ github.run_number }}
       - name: Upload findings
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-findings
           path: fuzz-out/findings

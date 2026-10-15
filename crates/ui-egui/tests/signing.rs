@@ -2,7 +2,7 @@
 
 use egui::{Pos2, pos2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use pdfcraft_engine::SignatureStatus;
 use pdfcraft_ui_egui::{Dialog, PdfCraftApp, QuickTool, RightPanel, SignStep};
 
@@ -64,6 +64,35 @@ fn field<'a>(h: &'a Harness<'static, PdfCraftApp>, label: &'a str) -> egui_kitte
 }
 
 #[test]
+fn ctrl_alt_q_types_an_email_without_quitting() {
+    let mut h = harness(dir());
+    h.state_mut().execute("sign.digital");
+    let (a, b) = (at(&h, 40.0, 90.0), at(&h, 220.0, 40.0));
+    drag(&mut h, a, b);
+    assert_eq!(h.state().sign_draft.as_ref().unwrap().step, SignStep::Configure);
+    field(&h, "Email Address").click();
+    h.run_steps(1);
+    field(&h, "Email Address").type_text("test");
+    h.run_steps(1);
+    // The key and text events produced by Ctrl+Alt+Q on German QWERTZ.
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Q,
+        physical_key: Some(egui::Key::Q),
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers { ctrl: true, command: true, alt: true, ..Default::default() },
+    });
+    h.input_mut().events.push(egui::Event::Text("@".into()));
+    h.step();
+    assert!(!h.output().viewport_output.values().any(|v| v.commands.contains(&egui::ViewportCommand::Close)));
+    assert_eq!(h.state().sign_draft.as_ref().unwrap().new_id.email, "test@");
+    field(&h, "Email Address").type_text("example.org");
+    h.run_steps(1);
+    assert_eq!(h.state().sign_draft.as_ref().unwrap().new_id.email, "test@example.org");
+    assert_eq!(h.state().dialog, Some(Dialog::Sign));
+}
+
+#[test]
 fn drawing_a_signature_creating_an_id_signing_and_trusting() {
     let dir = dir();
     let mut h = harness(dir.clone());
@@ -80,7 +109,7 @@ fn drawing_a_signature_creating_an_id_signing_and_trusting() {
     h.run_steps(1);
     field(&h, "Name").type_text("Grace Hopper");
     h.state_mut().sign_draft.as_mut().unwrap().new_id.key = 3;
-    for (label, text) in [("Password", "secret1"), ("Confirm Password", "secret1")] {
+    for (label, text) in [("Password", "secret12"), ("Confirm Password", "secret12")] {
         field(&h, label).click();
         h.run_steps(1);
         field(&h, label).type_text(text);
@@ -102,7 +131,7 @@ fn drawing_a_signature_creating_an_id_signing_and_trusting() {
     h.get_by_label("Sign").click();
     h.run_steps(3);
     h.get_by_label("The password is incorrect.");
-    h.state_mut().sign_draft.as_mut().unwrap().password = "secret1".into();
+    h.state_mut().sign_draft.as_mut().unwrap().password = "secret12".into();
     field(&h, "Reason").click();
     h.run_steps(1);
     field(&h, "Reason").type_text("I approve");
@@ -181,6 +210,9 @@ fn certifying_without_a_visible_signature() {
     h.get_by_label("Continue").click();
     h.run_steps(2);
     assert_eq!(h.state().digital_ids.len(), 1);
+    // The dialog shrinks onto this step. egui centers an area from the previous frame's size,
+    // so give the buttons a frame to land before clicking.
+    h.run_steps(2);
     h.get_by_label("Continue").click();
     h.run_steps(2);
     h.get_by_label("Certify as \"Test Signer EC\"");
@@ -245,6 +277,125 @@ fn clicking_an_empty_signature_field_signs_it() {
     let s = h.state();
     let sig = s.session.get(s.views[1].id).unwrap().signatures.iter().find(|x| x.field == "Approver").cloned().unwrap();
     assert!(sig.signed && sig.visible);
+}
+
+#[test]
+fn the_fill_and_sign_signature_or_an_image_shows_in_a_digital_signature() {
+    use pdfcraft_ui_egui::SignGraphic;
+    use pdfcraft_ui_egui::fill_sign::SavedSig;
+    let dir = dir().join("graphic");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = harness(dir.clone());
+    let p12 = concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12");
+    let cert = pdfcraft_engine::sign::pkcs12::open(&std::fs::read(p12).unwrap(), "test").unwrap().certificate;
+    let sign_as = |h: &mut Harness<'static, PdfCraftApp>, rect: [f64; 4]| {
+        h.state_mut().start_signing(0, Some(rect), None, None);
+        let entry = h.state_mut().add_digital_id(p12, &cert);
+        let d = h.state_mut().sign_draft.as_mut().unwrap();
+        (d.selected, d.step, d.password) = (Some(entry), SignStep::SignAs, "test".into());
+        h.run_steps(2);
+    };
+
+    // Without a saved Fill & Sign signature there is nothing to choose.
+    sign_as(&mut h, [20.0, 110.0, 280.0, 140.0]);
+    h.get_by_label("Graphic");
+    assert!(h.get_by_label("Fill & Sign signature").accesskit_node().is_disabled(), "disabled without one");
+    h.get_by_label("Cancel").click();
+    h.run_steps(2);
+
+    // The saved signature (typed here) takes the name's place.
+    h.state_mut().signature = Some(SavedSig::Typed("Grace Hopper".into()));
+    sign_as(&mut h, [20.0, 110.0, 280.0, 140.0]);
+    h.get_by_label("Fill & Sign signature").click();
+    h.run_steps(2);
+    assert_eq!(h.state().sign_draft.as_ref().unwrap().graphic, SignGraphic::FillSign);
+    h.get_by_label("Sign").click();
+    h.run_steps(6);
+    let s = h.state();
+    assert_eq!(s.sign_draft.as_ref().and_then(|d| d.error.clone()), None);
+    let sig = s.session.get(s.views[0].id).unwrap().signatures.iter().find(|x| x.signed).cloned().unwrap();
+    assert!(sig.visible && sig.status == SignatureStatus::Unknown, "{:?}", sig.details);
+    // Remembered for the next signature, and across a restart.
+    assert_eq!(s.sign_graphic, SignGraphic::FillSign);
+    sign_as(&mut h, [20.0, 20.0, 280.0, 60.0]);
+    assert_eq!(h.state().sign_draft.as_ref().unwrap().graphic, SignGraphic::FillSign);
+
+    // An image (the picker's result is set directly: the file dialog is native).
+    let image = {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(60, 20, image::Rgba([200, 0, 0, 255])).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        pdfcraft_engine::SignatureImage::from_bytes(png.get_ref()).unwrap()
+    };
+    h.state_mut().sign_draft.as_mut().unwrap().graphic = SignGraphic::Image(image.clone());
+    h.run_steps(2);
+    h.get_by_label("Choose image…");
+    h.get_by_label("Sign").click();
+    h.run_steps(6);
+    let s = h.state();
+    assert_eq!(s.sign_draft.as_ref().and_then(|d| d.error.clone()), None);
+    let signed = std::fs::read(dir.join("contract_signed.pdf")).unwrap();
+    assert!(signed.windows(6).any(|w| w == b"/Image"), "the image is embedded");
+    assert_eq!(s.session.get(s.views[0].id).unwrap().signatures.iter().filter(|x| x.signed).count(), 2);
+    let mut fresh = PdfCraftApp::new();
+    fresh.restore(&s.persist());
+    assert_eq!(fresh.sign_graphic, SignGraphic::Image(image));
+    // A saved choice that can't be read back falls back to the name.
+    fresh.restore(r#"{"sign_graphic": {"Image": "not base64"}}"#);
+    assert_eq!(fresh.sign_graphic, SignGraphic::Name);
+}
+
+/// The decoded text of every visible signature appearance (Helvetica forms) in a signed file.
+fn stamped(path: &std::path::Path) -> String {
+    use pdfcraft_cos::{Document, ObjRef, Object};
+    let doc = Document::open(std::sync::Arc::new(std::fs::read(path).unwrap())).unwrap();
+    let mut text = String::new();
+    for num in doc.object_numbers() {
+        if let Object::Stream(s) = &*doc.get(ObjRef { num, generation: 0 })
+            && s.dict.name(b"Subtype") == Some(b"Form")
+        {
+            let content = String::from_utf8_lossy(&s.decoded().unwrap()).into_owned();
+            if content.contains("/Helv") {
+                text.push_str(&content);
+            }
+        }
+    }
+    text
+}
+
+/// A signature signed in German is stamped with German labels. In Simplified Chinese, whose
+/// labels the signature's font can't draw, it is stamped with English ones and the dialog says
+/// so under the preview: signing neither fails nor writes `?` for them.
+#[test]
+fn the_signature_labels_follow_the_interface_language() {
+    use pdfcraft_ui_egui::i18n::{Lang, tr};
+    let p12 = concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12");
+    let cert = pdfcraft_engine::sign::pkcs12::open(&std::fs::read(p12).unwrap(), "test").unwrap().certificate;
+    let note = "The labels are in English: the signature's font can't draw them in this language.";
+    for (code, labels, in_english) in [("de", ["(Digital", "(Grund:", "(Datum:"], false), ("zh-hans", ["(Digitally", "(Reason:", "(Date:"], true)] {
+        let dir = dir().join(code);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = harness(dir.clone());
+        let lang = Lang::from_code(code).unwrap();
+        h.state_mut().set_option("language", code).unwrap();
+        h.state_mut().start_signing(0, Some([20.0, 110.0, 280.0, 180.0]), None, None);
+        let entry = h.state_mut().add_digital_id(p12, &cert);
+        {
+            let d = h.state_mut().sign_draft.as_mut().unwrap();
+            (d.selected, d.step, d.password, d.reason) = (Some(entry), SignStep::SignAs, "test".into(), "OK".into());
+            d.appearance.reason = true;
+        }
+        h.run_steps(3);
+        assert_eq!(h.query_all_by_label(tr(lang, note)).count(), usize::from(in_english), "{code}: the note under the preview");
+        field(&h, tr(lang, "Sign")).click();
+        h.run_steps(6);
+        assert_eq!(h.state().sign_draft.as_ref().and_then(|d| d.error.clone()), None, "{code}");
+        let content = stamped(&dir.join("contract_signed.pdf"));
+        for label in labels {
+            assert!(content.contains(label), "{code}: {label}: {content}");
+        }
+        assert!(!content.contains('?'), "{code}: {content}");
+        assert_eq!(content.contains("Digitally") || content.contains("Reason"), in_english, "{code}: {content}");
+    }
 }
 
 #[test]
@@ -375,4 +526,49 @@ fn an_unusable_id_is_shown_with_its_reason_and_cannot_be_chosen() {
     h.state_mut().start_signing(0, None, None, None);
     h.run_steps(3);
     assert_eq!(h.state().sign_draft.as_ref().unwrap().selected, Some(1));
+}
+
+/// Issue #1396: an imported digital ID can be removed from Sign with a Digital ID, after a
+/// confirmation, and its file stays where it was.
+#[test]
+fn an_imported_digital_id_can_be_removed() {
+    let dir = dir().join("remove");
+    std::fs::create_dir_all(&dir).unwrap();
+    let p12 = dir.join("signer.p12");
+    std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12"), &p12).unwrap();
+    let mut h = harness(dir.clone());
+    assert!(h.state_mut().execute("sign.certify_invisible"));
+    h.run_steps(2);
+    {
+        let d = h.state_mut().sign_draft.as_mut().unwrap();
+        d.new_id.create = false;
+        d.new_id.file = p12.to_string_lossy().into_owned();
+        d.new_id.file_password = "test".into();
+    }
+    h.run_steps(1);
+    h.get_by_label("Continue").click();
+    h.run_steps(4);
+    assert_eq!(h.state().digital_ids.len(), 1);
+    assert_eq!(h.state().sign_draft.as_ref().map(|d| d.step), Some(SignStep::Choose));
+
+    // Remove asks first, and Cancel keeps the ID. The dialog changes size with the question;
+    // egui centres it from the previous frame's size, so let it settle before each click.
+    h.get_by_label("Remove").click();
+    h.run_steps(4);
+    h.get_by_label("Remove \"Test Signer EC\" from this list? The file itself is not deleted.");
+    // The question's Cancel comes before the dialog's own.
+    h.get_all_by_label("Cancel").next().unwrap().click();
+    h.run_steps(4);
+    assert!(h.query_by_label_contains("from this list?").is_none());
+    assert_eq!(h.state().digital_ids.len(), 1);
+
+    h.get_by_label("Remove").click();
+    h.run_steps(4);
+    h.get_by_label("Remove").click();
+    h.run_steps(3);
+    assert!(h.state().digital_ids.is_empty());
+    assert!(p12.exists(), "the file itself is not deleted");
+    // With no IDs left the dialog offers to configure one.
+    assert_eq!(h.state().sign_draft.as_ref().map(|d| d.step), Some(SignStep::Configure));
+    h.get_by_label("Configure a Digital ID for Signing");
 }
