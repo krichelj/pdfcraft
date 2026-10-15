@@ -1,6 +1,6 @@
 # PdfCraft architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first public architecture document, written from the code on main) · **Target:** Adobe Acrobat Pro (Acrobat DC, continuous track 26.002.21931, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (shared print spooler; Windows CI passes) · **Target:** Adobe Acrobat Pro (Acrobat DC, continuous track 26.002.21931, macOS)
 
 How PdfCraft is built today. The design rationale and the planned crates live in
 `plan/architecture.md` and `plan/adr/` (local-only); this file describes what is on `main`. Each
@@ -8,7 +8,7 @@ crate's `README.md` has the detail.
 
 ## Shape
 
-One Cargo workspace (`Cargo.toml`, edition 2024, Rust ≥ 1.90, `MIT OR Apache-2.0`), 31 library
+One Cargo workspace (`Cargo.toml`, edition 2024, Rust ≥ 1.95, `MIT OR Apache-2.0`), 31 library
 crates in `crates/`, three binaries in `apps/`, build tooling in `xtask/`, and patched third-party
 crates in `vendor/`. About 152k lines of Rust and 1,765 tests (2026-10-10). Rust only: no
 handwritten JS/TS, in the product or the build.
@@ -101,7 +101,7 @@ Every user-facing feature is reachable headlessly (`AGENTS.md` §3):
 `cargo xtask ci` runs fmt, clippy (`-D warnings`), tests, the layering check, the WASM check,
 `xtask assets` (asset licences and hashes), `xtask parity` (checklist claims must cite real commands,
 tools and tests) and `xtask deny` (dependency licences). Other tasks: `xtask fuzz`, `xtask corpus` and `xtask check` (robustness
-sweep over the pinned pdf.js corpus), `xtask text-oracle` (word F1 against `pdftotext`),
+sweep over the pinned pdf.js corpus), `xtask text-oracle` (word F1 and reading order against `pdftotext`),
 `xtask demo-pdf`, `xtask screenshots`, `xtask models` (OCR models), `xtask version`. Releases are
 built by `.github/workflows/release.yml` ([releasing.md](releasing.md)).
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use pdfcraft_cos::{Document, SaveOptions, write_incremental};
+use pdfcraft_cos::{Document, SaveOptions, write_full, write_incremental};
 
 use super::*;
 
@@ -116,6 +116,23 @@ fn header_start_number_that_would_wrap_is_refused_without_drawing() {
 }
 
 #[test]
+fn header_bates_start_that_would_overflow_is_refused_without_drawing() {
+    // A Bates start of u64::MAX has no room for a second page. The run must be refused up front
+    // instead of overflowing (a panic in debug builds, a wrap to 0 in release builds).
+    let mut doc = fixture();
+    let hf = HeaderFooter {
+        text: [String::new(), String::new(), "<<Bates Number#6#18446744073709551615#A#B>>".into(), String::new(), String::new(), String::new()],
+        ..HeaderFooter::default()
+    };
+    let err = add_header_footer(&mut doc, &[0, 1], &hf, false, &cx()).unwrap_err();
+    assert!(err.to_string().contains("Bates"), "{err}");
+    assert!(marks_present(&doc).is_empty(), "nothing is drawn when the run is refused");
+    // A single page still fits the start number itself.
+    add_header_footer(&mut doc, &[0], &hf, false, &cx()).unwrap();
+    assert_eq!(marks_present(&doc).len(), 1);
+}
+
+#[test]
 fn replace_and_remove_restore_the_original_content() {
     let mut doc = fixture();
     let original = streams(&doc, 0);
@@ -151,6 +168,26 @@ fn watermarks_rotate_fade_and_can_go_behind() {
 }
 
 #[test]
+fn watermark_offset_moves_the_centre_right_and_up() {
+    let mut doc = fixture();
+    let wm = Watermark { text: "DRAFT".into(), rotation: 0.0, offset: [-100.0, 50.0], ..Watermark::default() };
+    add_watermark(&mut doc, &[0], &wm, false).unwrap();
+    let s = streams(&doc, 0);
+    let mark = s.iter().find(|c| c.contains("/PCMark /Watermark")).expect("the watermark stream");
+    assert!(mark.contains("1 0 0 1 200 450 cm"), "{mark}");
+}
+
+#[test]
+fn a_watermark_offset_that_is_not_finite_is_refused() {
+    for offset in [[f64::NAN, 0.0], [0.0, f64::INFINITY], [f64::NEG_INFINITY, 0.0]] {
+        let mut doc = fixture();
+        let wm = Watermark { text: "DRAFT".into(), offset, ..Watermark::default() };
+        assert!(matches!(add_watermark(&mut doc, &[0], &wm, false), Err(EditError::Invalid(_))), "{offset:?}");
+        assert!(!doc.is_modified());
+    }
+}
+
+#[test]
 fn invalid_requests_change_nothing() {
     let mut doc = fixture();
     assert!(matches!(add_header_footer(&mut doc, &[0], &HeaderFooter::default(), false, &cx()), Err(EditError::Invalid(_))));
@@ -159,6 +196,7 @@ fn invalid_requests_change_nothing() {
         add_background(&mut doc, &[9], &Background { color: [1.0; 3], opacity: 1.0, ..Background::default() }, false),
         Err(EditError::NoSuchPage(9))
     );
+    assert_eq!(EditError::NoSuchPage(9).to_string(), "page 10 does not exist", "the message counts pages from 1 (#1550)");
     assert!(!doc.is_modified());
 }
 
@@ -194,6 +232,37 @@ fn flattening_draws_appearances_into_the_page_and_removes_the_comments() {
     assert!(marks_present(&doc).is_empty(), "flattened content is not a removable mark");
 }
 
+/// #1317: a cloudy square this builder cannot draw stays on the page. A solid square, a hidden
+/// cloudy square and a cloudy square that already has an appearance keep their previous results.
+#[test]
+fn flattening_keeps_a_cloudy_square_it_cannot_draw() {
+    let page = stream("", " ");
+    let form = "<< /Type /XObject /Subtype /Form /BBox [100 600 200 650] /Length 28 >>\nstream\n1 0 0 RG 100 600 100 50 re S\nendstream";
+    let case = |extra: &str, drawn: usize, left: bool| {
+        let annot = format!("<< /Type /Annot /Subtype /Square /Rect [100 600 200 650] /C [1 0 0] /Contents (Synthetic comment) {extra} >>");
+        let mut doc = build(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << >> /Contents 5 0 R /Annots [4 0 R] >>",
+            &annot,
+            &page,
+            form,
+        ]);
+        let before = streams(&doc, 0);
+        assert_eq!(flatten(&mut doc, &[0], true, false).unwrap(), drawn);
+        let doc = reopen(&doc);
+        let p = &pdfcraft_model::pages(&doc)[0];
+        assert_eq!(p.dict.contains(b"Annots"), left);
+        if drawn == 0 {
+            assert_eq!(streams(&doc, 0), before, "nothing was drawn in place of the comment");
+        }
+    };
+    case("/BE << /S /C /I 2 >>", 0, true);
+    case("/BE << /S /S >>", 1, false);
+    case("/BE << /S /C /I 2 >> /F 2", 0, true);
+    case("/BE << /S /C /I 2 >> /AP << /N 6 0 R >>", 1, false);
+}
+
 /// #805: a supported note with no stored appearance is still drawn by viewers. Flattening must
 /// generate that appearance and bake it into the page, not delete a comment that shows an icon.
 #[test]
@@ -212,6 +281,138 @@ fn flattening_keeps_a_note_whose_appearance_is_missing() {
     assert!(!p.dict.contains(b"Annots"), "the note is gone once its icon is baked in");
     let flat = streams(&doc, 0).pop().unwrap();
     assert!(flat.contains("q 1 0 0 1 10 10 cm /PCFl0 Do Q"), "{flat}");
+}
+
+/// #1470: a form field whose widget is on no page (left behind by page extraction or combining)
+/// has nothing to draw, but flattening every form field still takes it out of `/AcroForm /Fields`,
+/// or other software keeps treating the flattened file as a form. A hidden widget on a page is
+/// left alone, as before.
+#[test]
+fn flattening_fields_drops_the_ones_on_no_page() {
+    let page = stream("", " ");
+    let mut doc = build(&[
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R 6 0 R 7 0 R 8 0 R] >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R /Annots [5 0 R 7 0 R] >>",
+        &page,
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (on_page) /Rect [10 10 150 40] /F 4 /AP << /N 10 0 R >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (orphan) /Rect [10 50 150 80] /F 4 /AP << /N 10 0 R >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (hidden) /Rect [10 90 150 120] /F 2 /AP << /N 10 0 R >> >>",
+        "<< /FT /Tx /T (parent) /Kids [9 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /Parent 8 0 R /Rect [10 130 150 160] /F 4 /AP << /N 10 0 R >> >>",
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 140 30] /Length 0 >>\nstream\n\nendstream",
+    ]);
+    assert_eq!(flatten(&mut doc, &[0], false, true).unwrap(), 1, "only the field on the page is drawn");
+    let doc = reopen(&doc);
+    let root = doc.root().unwrap();
+    let af = doc.resolve(doc.get(root).as_dict().unwrap().get(b"AcroForm").unwrap());
+    let fields = doc.resolve(af.as_dict().unwrap().get(b"Fields").unwrap());
+    let left: Vec<pdfcraft_cos::ObjRef> = fields.as_array().unwrap().iter().filter_map(|f| f.as_ref()).collect();
+    assert_eq!(left, [pdfcraft_cos::ObjRef::new(7, 0)], "only the hidden field on the page stays");
+}
+
+/// #1794: a form field whose widget has no usable appearance (none stored, or none for its
+/// selected state) has nothing to draw. Flattening used to remove it anyway, losing its value
+/// with no ink in its place. It stays, in the page and in the form, like a comment that can't be
+/// drawn; a field with an appearance is still baked in and removed.
+#[test]
+fn flattening_keeps_a_valued_widget_it_cannot_draw() {
+    let page = stream("", " ");
+    let mut doc = build(&[
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R 6 0 R 7 0 R] >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R /Annots [5 0 R 6 0 R 7 0 R] >>",
+        &page,
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Ada) /Rect [10 10 150 40] /F 4 >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /V /Yes /AS /Yes /Rect [10 50 30 70] /F 4 /AP << /N << /Off 8 0 R >> >> >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (drawn) /V (Bob) /Rect [10 90 150 120] /F 4 /AP << /N 8 0 R >> >>",
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 140 30] /Length 0 >>\nstream\n\nendstream",
+    ]);
+    assert_eq!(flatten(&mut doc, &[0], false, true).unwrap(), 1, "only the field with an appearance is drawn");
+    let doc = reopen(&doc);
+    let refs = |o: &Object| -> Vec<u32> { doc.resolve(o).as_array().unwrap().iter().filter_map(|f| f.as_ref()).map(|r| r.num).collect() };
+    let p = &pdfcraft_model::pages(&doc)[0];
+    assert_eq!(refs(p.dict.get(b"Annots").unwrap()), [5, 6], "the undrawable widgets stay on the page");
+    let root = doc.root().unwrap();
+    let af = doc.resolve(doc.get(root).as_dict().unwrap().get(b"AcroForm").unwrap());
+    assert_eq!(refs(af.as_dict().unwrap().get(b"Fields").unwrap()), [5, 6], "and in the form");
+    let value = |n: u32| doc.get(pdfcraft_cos::ObjRef::new(n, 0)).as_dict().unwrap().get(b"V").cloned();
+    assert_eq!(value(5), Some(Object::String(pdfcraft_cos::PdfString::literal(b"Ada".to_vec()))));
+    assert_eq!(value(6), Some(Object::name("Yes")));
+}
+
+/// #1794: a reply this builder cannot draw stays on the page even when the comment it replies to
+/// is flattened; the comment's pop-up still goes with it.
+#[test]
+fn flattening_keeps_an_undrawn_reply_to_a_flattened_comment() {
+    let page = stream("", " ");
+    let mut doc = build(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << >> /Contents 4 0 R /Annots [5 0 R 6 0 R 7 0 R] >>",
+        &page,
+        "<< /Type /Annot /Subtype /Square /Rect [100 600 200 650] /C [1 0 0] /Contents (Synthetic comment) /AP << /N 8 0 R >> /Popup 7 0 R >>",
+        "<< /Type /Annot /Subtype /Square /Rect [100 500 200 550] /C [1 0 0] /Contents (Synthetic reply) /BE << /S /C /I 2 >> /IRT 5 0 R >>",
+        "<< /Type /Annot /Subtype /Popup /Rect [300 600 400 700] /Parent 5 0 R >>",
+        "<< /Type /XObject /Subtype /Form /BBox [100 600 200 650] /Length 28 >>\nstream\n1 0 0 RG 100 600 100 50 re S\nendstream",
+    ]);
+    assert_eq!(flatten(&mut doc, &[0], true, false).unwrap(), 1, "the comment is drawn; the cloudy reply cannot be");
+    let doc = reopen(&doc);
+    let p = &pdfcraft_model::pages(&doc)[0];
+    let left: Vec<u32> = doc.resolve(p.dict.get(b"Annots").unwrap()).as_array().unwrap().iter().filter_map(|f| f.as_ref()).map(|r| r.num).collect();
+    assert_eq!(left, [6], "the undrawn reply stays; the comment and its pop-up are gone");
+}
+
+/// Flattening never makes a `?` permanent: it refuses, changing nothing, a text box without an
+/// appearance whose text Helvetica can't draw (another program's), and a comment or form field
+/// whose appearance PdfCraft drew with `?` (marked `PCUndrawn`). A comment another program drew
+/// with a font that has those characters (an appearance, no mark) flattens as before.
+#[test]
+fn flattening_refuses_what_would_bake_in_question_marks() {
+    let page = stream("", " ");
+    let refused = |annot: &str, comments: bool, fields: bool, what: &str| {
+        let mut doc = build(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R /Annots [5 0 R] >>",
+            &page,
+            annot,
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 140 30] /Length 0 >>\nstream\n\nendstream",
+        ]);
+        let before = write_incremental(&doc, &SaveOptions::default()).unwrap();
+        let err = flatten(&mut doc, &[0], comments, fields).unwrap_err().to_string();
+        assert!(err.contains(what) && err.contains("page 1") && err.contains("\"欢\" (U+6B22)") && err.contains("nothing was flattened"), "{err}");
+        assert_eq!(write_incremental(&doc, &SaveOptions::default()).unwrap(), before, "a refused flatten changes nothing");
+        assert!(pdfcraft_model::pages(&doc)[0].dict.contains(b"Annots"), "the annotation is still there");
+    };
+    refused(
+        "<< /Type /Annot /Subtype /FreeText /Rect [10 10 150 40] /DA (0 g /Helv 12 Tf) /Contents <FEFF6B228FCE> /F 4 >>",
+        true,
+        false,
+        "a comment",
+    );
+    refused(
+        "<< /Type /Annot /Subtype /FreeText /Rect [10 10 150 40] /DA (0 g /Helv 12 Tf) /Contents <FEFF6B228FCE> /F 4 /AP << /N 6 0 R >> /PCUndrawn <FEFF6B22> >>",
+        true,
+        false,
+        "a comment",
+    );
+    refused(
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V <FEFF6B228FCE> /Rect [10 10 150 40] /F 4 /AP << /N 6 0 R >> /PCUndrawn <FEFF6B22> >>",
+        false,
+        true,
+        "a form field",
+    );
+    // Drawn by another program, with a font that has 欢: no mark, so it flattens.
+    let mut doc = build(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R /Annots [5 0 R] >>",
+        &page,
+        "<< /Type /Annot /Subtype /FreeText /Rect [10 10 150 40] /DA (0 g /Helv 12 Tf) /Contents <FEFF6B228FCE> /F 4 /AP << /N 6 0 R >> >>",
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 140 30] /Length 0 >>\nstream\n\nendstream",
+    ]);
+    assert_eq!(flatten(&mut doc, &[0], true, false).unwrap(), 1);
 }
 
 /// Display space is in points, so on a `/UserUnit 2` page an item's box maps to half as many
@@ -245,6 +446,170 @@ fn added_items_follow_the_page_user_unit() {
     legacy.set(on(2).obj, Object::Stream(s));
     let Content::Text(old) = &list_added(&legacy).into_iter().find(|a| a.page == 2).unwrap().content else { panic!() };
     assert_eq!((old.rect[0], old.rect[2], old.rect[3], old.size), (144.0, 600.0, 1400.0, 28.0), "scaled to points");
+}
+
+fn tagged_dictionary(tag: &str, added: Option<Object>) -> Dict {
+    let mut dict = Dict::new();
+    dict.set(b"PCMark".to_vec(), Object::name(tag));
+    if let Some(added) = added {
+        dict.set(b"PCAdded".to_vec(), added);
+    }
+    dict
+}
+
+fn tagged_stream(doc: &mut Document, tag: &str, added: Option<Object>) -> Object {
+    Object::Ref(doc.add(Object::Stream(Stream::from_raw(tagged_dictionary(tag, added), Vec::new()))))
+}
+
+fn added_text_params() -> Dict {
+    let mut params = Dict::new();
+    params.set(b"Rect".to_vec(), Object::Array([10, 20, 110, 40].into_iter().map(Object::Int).collect()));
+    params.set(b"Kind".to_vec(), Object::name("Text"));
+    params.set(b"Text".to_vec(), Object::String(pdfcraft_cos::PdfString::text("Added text")));
+    params.set(b"Size".to_vec(), Object::Int(12));
+    params
+}
+
+fn added_image_params(image: pdfcraft_cos::ObjRef) -> Dict {
+    let mut params = Dict::new();
+    params.set(b"Rect".to_vec(), Object::Array([10, 20, 110, 70].into_iter().map(Object::Int).collect()));
+    params.set(b"Kind".to_vec(), Object::name("Image"));
+    params.set(b"Image".to_vec(), Object::Ref(image));
+    params
+}
+
+fn set_page_contents(doc: &mut Document, contents: Object, user_unit: Option<Object>) {
+    let page = pdfcraft_model::pages(doc)[0].obj;
+    doc.update_dict(page, |dict| {
+        dict.set(b"Contents".to_vec(), contents);
+        if let Some(user_unit) = user_unit {
+            dict.set(b"UserUnit".to_vec(), user_unit);
+        }
+    })
+    .unwrap();
+}
+
+fn assert_marker_scan_matches_legacy(doc: &Document, label: &str, marks: &[MarkKind], added: usize) -> MarkerScan {
+    let expected_marks = marks_present(doc);
+    let expected_added = list_added(doc);
+    let scan = scan_markers(doc);
+    assert_eq!(scan.marks, expected_marks, "{label}: marks differ from the independent scan");
+    assert_eq!(scan.added, expected_added, "{label}: added content differs from the independent scan");
+    assert_eq!(scan.marks, marks, "{label}: fixture's mark order or deduplication is wrong");
+    assert_eq!(scan.added.len(), added, "{label}: fixture's added-item count is wrong");
+    scan
+}
+
+#[test]
+fn combined_marker_scan_matches_the_independent_scans() {
+    let empty = build(&["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R >>"]);
+    assert_marker_scan_matches_legacy(&empty, "empty page", &[], 0);
+    assert_marker_scan_matches_legacy(&fixture(), "ordinary streams and a page without contents", &[], 0);
+
+    for (tag, kind) in [("HeaderFooter", MarkKind::HeaderFooter), ("Watermark", MarkKind::Watermark), ("Background", MarkKind::Background)] {
+        let mut doc = fixture();
+        let marker = tagged_stream(&mut doc, tag, None);
+        set_page_contents(&mut doc, marker, None);
+        assert_marker_scan_matches_legacy(&doc, tag, &[kind], 0);
+    }
+
+    let mut all_marks = fixture();
+    let background = tagged_stream(&mut all_marks, "Background", None);
+    let watermark = tagged_stream(&mut all_marks, "Watermark", None);
+    let header = tagged_stream(&mut all_marks, "HeaderFooter", None);
+    set_page_contents(
+        &mut all_marks,
+        Object::Array(vec![background.clone(), watermark.clone(), header.clone(), watermark, header, background]),
+        None,
+    );
+    assert_marker_scan_matches_legacy(&all_marks, "all mark kinds repeated", &[MarkKind::Background, MarkKind::Watermark, MarkKind::HeaderFooter], 0);
+
+    let mut single_reference = fixture();
+    let marker = tagged_stream(&mut single_reference, "Watermark", None);
+    set_page_contents(&mut single_reference, marker, None);
+    assert_marker_scan_matches_legacy(&single_reference, "contents as one reference", &[MarkKind::Watermark], 0);
+
+    let mut text_only = fixture();
+    let text = tagged_stream(&mut text_only, "Added", Some(Object::Dict(added_text_params())));
+    set_page_contents(&mut text_only, text, None);
+    let text_scan = assert_marker_scan_matches_legacy(&text_only, "one added text item", &[], 1);
+    assert!(matches!(&text_scan.added[0].content, Content::Text(text) if text.text == "Added text"));
+
+    let mut indirect_params = fixture();
+    let params = indirect_params.add(Object::Dict(added_text_params()));
+    let text = tagged_stream(&mut indirect_params, "Added", Some(Object::Ref(params)));
+    set_page_contents(&mut indirect_params, text, None);
+    let indirect_scan = assert_marker_scan_matches_legacy(&indirect_params, "indirect PCAdded dictionary", &[], 1);
+    assert!(matches!(&indirect_scan.added[0].content, Content::Text(text) if text.text == "Added text"));
+
+    let mut image_only = fixture();
+    let image = image_only.add(Object::Stream(Stream::from_raw(Dict::new(), vec![0])));
+    let image_item = tagged_stream(&mut image_only, "Added", Some(Object::Dict(added_image_params(image))));
+    set_page_contents(&mut image_only, image_item, None);
+    let image_scan = assert_marker_scan_matches_legacy(&image_only, "one added image item", &[], 1);
+    assert!(matches!(&image_scan.added[0].content, Content::Image(item) if item.image == image));
+
+    let mut interleaved = fixture();
+    let text = tagged_stream(&mut interleaved, "Added", Some(Object::Dict(added_text_params())));
+    let watermark = tagged_stream(&mut interleaved, "Watermark", None);
+    let image = interleaved.add(Object::Stream(Stream::from_raw(Dict::new(), vec![0])));
+    let image_item = tagged_stream(&mut interleaved, "Added", Some(Object::Dict(added_image_params(image))));
+    let header = tagged_stream(&mut interleaved, "HeaderFooter", None);
+    set_page_contents(&mut interleaved, Object::Array(vec![text, watermark, image_item, header]), None);
+    let interleaved_scan =
+        assert_marker_scan_matches_legacy(&interleaved, "marks and added content interleaved", &[MarkKind::Watermark, MarkKind::HeaderFooter], 2);
+    assert!(matches!(&interleaved_scan.added[0].content, Content::Text(_)));
+    assert!(matches!(&interleaved_scan.added[1].content, Content::Image(_)));
+
+    let mut array_contents = fixture();
+    let background = tagged_stream(&mut array_contents, "Background", None);
+    let array_ref = array_contents.add(Object::Array(vec![background]));
+    set_page_contents(&mut array_contents, Object::Ref(array_ref), None);
+    assert_marker_scan_matches_legacy(&array_contents, "contents as an indirect array", &[MarkKind::Background], 0);
+
+    let mut malformed = fixture();
+    let indirect_mark = malformed.add(Object::Dict(tagged_dictionary("HeaderFooter", None)));
+    let missing_added = tagged_stream(&mut malformed, "Added", None);
+    let invalid_added = tagged_stream(&mut malformed, "Added", Some(Object::String(pdfcraft_cos::PdfString::text("bad params"))));
+    let unknown = tagged_stream(&mut malformed, "FutureKind", None);
+    let direct_watermark = Object::Dict(tagged_dictionary("Watermark", None));
+    let direct_added = Object::Dict(tagged_dictionary("Added", Some(Object::Dict(added_text_params()))));
+    set_page_contents(
+        &mut malformed,
+        Object::Array(vec![
+            Object::Null,
+            Object::Int(7),
+            Object::name("not-a-stream"),
+            direct_watermark,
+            Object::Ref(indirect_mark),
+            missing_added,
+            invalid_added,
+            unknown,
+            direct_added,
+        ]),
+        None,
+    );
+    assert_marker_scan_matches_legacy(
+        &malformed,
+        "malformed, non-stream, unknown and direct entries",
+        &[MarkKind::Watermark, MarkKind::HeaderFooter],
+        0,
+    );
+
+    let mut shared = fixture();
+    let added = tagged_stream(&mut shared, "Added", Some(Object::Dict(added_text_params())));
+    let mark = tagged_stream(&mut shared, "Background", None);
+    set_page_contents(&mut shared, Object::Array(vec![added.clone(), mark.clone(), added.clone(), mark]), None);
+    let shared_scan = assert_marker_scan_matches_legacy(&shared, "repeated shared stream references", &[MarkKind::Background], 2);
+    assert_eq!(shared_scan.added[0].obj, shared_scan.added[1].obj);
+
+    let mut user_unit = fixture();
+    let added = tagged_stream(&mut user_unit, "Added", Some(Object::Dict(added_text_params())));
+    set_page_contents(&mut user_unit, added, Some(Object::Int(2)));
+    let unit_scan = assert_marker_scan_matches_legacy(&user_unit, "non-1.0 UserUnit", &[], 1);
+    let Content::Text(text) = &unit_scan.added[0].content else { panic!() };
+    assert_eq!(text.rect, [20.0, 40.0, 220.0, 80.0]);
+    assert_eq!(text.size, 24.0);
 }
 
 #[test]
@@ -342,6 +707,82 @@ fn added_arabic_text_is_shaped_in_display_order_and_stays_searchable() {
     }
     for letter in ["0645", "0631", "062D", "0628", "0627", "0634", "0643"] {
         assert!(mapped.contains(&format!("<{letter}>")), "{letter} in {mapped}");
+    }
+}
+
+#[test]
+fn added_hebrew_text_is_drawn_right_to_left_and_stays_searchable() {
+    let mut doc = fixture();
+    let text = AddedText {
+        rect: [72.0, 600.0, 400.0, 700.0],
+        text: "שלום (עולם) 2026 World".into(),
+        size: 14.0,
+        align: Align::Right,
+        ..AddedText::default()
+    };
+    if pdfcraft_fonts::document_hebrew_font(false).is_none() {
+        eprintln!("skipping the Hebrew drawing checks: built without a craft-fonts Hebr face (set CRAFT_FONTS_DIR)");
+        assert_eq!(first_undrawable(&text), Some('ש'));
+        let err = add_content(&mut doc, 0, &Content::Text(text)).unwrap_err();
+        assert!(matches!(&err, EditError::Invalid(m) if m.contains("U+05E9")), "{err:?}");
+        assert!(!doc.is_modified(), "nothing is written when the font is missing");
+        return;
+    }
+    assert_eq!(first_undrawable(&text), None);
+    add_content(&mut doc, 0, &Content::Text(text.clone())).unwrap();
+    // Points stay on their letters; a Hebrew line in an Arabic item and Arabic in a Hebrew one.
+    for other in ["שָׁלוֹם", "שלום مرحبا"] {
+        let other = AddedText { text: other.into(), rect: [72.0, 500.0, 400.0, 520.0], ..text.clone() };
+        if other.text.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c)) && pdfcraft_fonts::document_arabic_font().is_none() {
+            continue;
+        }
+        add_content(&mut doc, 0, &Content::Text(other)).unwrap();
+    }
+    let doc = reopen(&doc);
+    let added = list_added(&doc);
+    let Content::Text(t) = &added[0].content else { panic!() };
+    assert_eq!(t.text, "שלום (עולם) 2026 World", "the logical text is kept for editing");
+    let s = streams(&doc, 0);
+    let item = s.iter().find(|s| s.contains("(World) Tj")).unwrap();
+    // A right-to-left paragraph: "World", typed last, is drawn left of the Hebrew.
+    let x_before = |s: &str, at: usize| -> f64 {
+        let tm = s[..at].rfind("1 0 0 1 ").unwrap() + 8;
+        s[tm..].split(' ').next().unwrap().parse().unwrap()
+    };
+    let latin_x = x_before(item, item.find("(World) Tj").unwrap());
+    let hebrew_at = item.find("/PCAr").unwrap();
+    let hebrew_x = x_before(item, item[hebrew_at..].find(" Tj").unwrap() + hebrew_at);
+    assert!(latin_x < hebrew_x, "{item}");
+    // Copy and search get the typing order back.
+    let logical: String = t.text.encode_utf16().map(|u| format!("{u:04X}")).collect();
+    assert!(item.contains(&format!("/ActualText <FEFF{logical}>")), "{item}");
+    // The Hebrew glyphs come from a Type 3 font named after the face, whose ToUnicode map gives
+    // back each letter.
+    let p = &pdfcraft_model::pages(&doc)[0];
+    let res = doc.resolve(p.dict.get(b"Resources").unwrap());
+    let fonts = doc.resolve(res.as_dict().unwrap().get(b"Font").unwrap()).as_dict().unwrap().clone();
+    let shaped: Vec<_> = fonts.iter().filter(|(k, _)| k.starts_with(b"PCAr")).map(|(_, v)| doc.resolve(v).as_dict().unwrap().clone()).collect();
+    let mut mapped = String::new();
+    for f in &shaped {
+        assert_eq!(f.name(b"Subtype"), Some(&b"Type3"[..]));
+        mapped += &String::from_utf8_lossy(&stream_bytes(&doc, f.get(b"ToUnicode").unwrap()).unwrap());
+    }
+    for letter in ["05E9", "05DC", "05D5", "05DD", "05E2"] {
+        assert!(mapped.contains(&format!("<{letter}>")), "{letter} in {mapped}");
+    }
+    let font_name = |f: &Dict| doc.resolve(f.get(b"FontDescriptor").unwrap()).as_dict().unwrap().name(b"FontName").map(<[u8]>::to_vec);
+    assert!(shaped.iter().any(|f| font_name(f).as_deref() == Some(&b"NotoSansHebrew"[..])));
+    // A pointed letter is one glyph with its points, mapped back whole.
+    assert!(mapped.contains("<05E905"), "{mapped}");
+}
+
+#[test]
+fn odd_hebrew_text_never_panics() {
+    let mut doc = fixture();
+    let long = "שלום עולם ".repeat(2_000);
+    for s in ["\u{202E}ש\u{05B8}\u{05B8} (]", "\u{05B8}", "א\u{200F}\u{2067}b\u{2069}", "א\n\nב\tc", "׳״ 456", long.as_str()] {
+        let r = add_content(&mut doc, 0, &Content::Text(AddedText { rect: [0.0, 800.0, 300.0, 780.0], text: s.into(), ..AddedText::default() }));
+        assert_eq!(r.is_ok(), pdfcraft_fonts::document_hebrew_font(false).is_some(), "{:?}: {r:?}", s.chars().take(12).collect::<String>());
     }
 }
 
@@ -656,6 +1097,180 @@ fn japanese_paragraph_uses_unicode_type3_fallback() {
     assert_eq!(text::text_blocks(&reopened, 0).unwrap()[0].text, replacement);
 }
 
+/// The first `n` Japanese characters, in code point order, that every craft-fonts face can draw, so
+/// whichever face an edit picks has them all. Without craft-fonts there are no faces, every character
+/// passes, and the text is still long.
+fn covered_japanese_chars(n: usize) -> String {
+    let faces = pdfcraft_fonts::document_japanese_fonts_for_style(false, false);
+    (0x4E00..0xA000)
+        .filter_map(char::from_u32)
+        .filter(|ch| faces.iter().all(|face| pdfcraft_fonts::japanese_glyph_from(face, *ch).is_ok()))
+        .take(n)
+        .collect()
+}
+
+/// The page's Type 3 fallback fonts (`PCJp`, `PCJp1`, ...) by resource name.
+fn fallback_fonts(doc: &Document) -> Vec<(Vec<u8>, Dict)> {
+    let p = pdfcraft_model::pages(doc).swap_remove(0);
+    let res = doc.resolve(p.dict.get(b"Resources").unwrap());
+    let fonts = doc.resolve(res.as_dict().unwrap().get(b"Font").unwrap());
+    fonts
+        .as_dict()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| name.starts_with(b"PCJp"))
+        .map(|(name, font)| (name.clone(), doc.resolve(font).as_dict().unwrap().clone()))
+        .collect()
+}
+
+/// More unique fallback glyphs than one Type 3 font holds (240) are split across several generated
+/// fonts, each within that limit, and the text still reads back as one line.
+#[test]
+fn japanese_replacement_over_240_unique_glyphs_is_split_across_fallback_fonts() {
+    let replacement = covered_japanese_chars(300);
+    let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
+    if without_craft_fonts("japanese_replacement_over_240_unique_glyphs_is_split_across_fallback_fonts") {
+        // Without craft-fonts the long text gets the clear error, not the old limit message.
+        let err = text::replace_line(&mut doc, 0, 0, &replacement).unwrap_err().to_string();
+        assert!(err.contains("CRAFT_FONTS_DIR"), "{err}");
+        return;
+    }
+    text::replace_line(&mut doc, 0, 0, &replacement).unwrap();
+    let reopened = reopen(&doc);
+    let lines = text::text_lines(&reopened, 0).unwrap();
+    assert_eq!(lines.len(), 1, "one line: {:?}", lines.iter().map(|l| &l.text).collect::<Vec<_>>());
+    assert_eq!(lines[0].text, replacement);
+    let fonts = fallback_fonts(&reopened);
+    assert_eq!(fonts.len(), 2, "300 glyphs take a 240-glyph font and a 60-glyph font");
+    let mut glyphs = 0;
+    for (name, font) in &fonts {
+        let procs = reopened.resolve(font.get(b"CharProcs").unwrap());
+        let count = procs.as_dict().unwrap().len();
+        let last = font.get(b"LastChar").and_then(|o| o.as_int()).unwrap_or(i64::MAX);
+        assert!(count <= 240 && last <= 240, "{name:?}: {count} glyphs, LastChar {last}");
+        glyphs += count;
+    }
+    assert_eq!(glyphs, 300);
+}
+
+/// A replacement whose last glyph no face draws (in a later font) changes nothing: neither the
+/// document nor a snapshot taken before the edit, which is what undo restores.
+#[test]
+fn japanese_replacement_missing_a_glyph_after_240_changes_nothing() {
+    if without_craft_fonts("japanese_replacement_missing_a_glyph_after_240_changes_nothing") {
+        return;
+    }
+    // The first CJK character that no face draws: the 242nd unique character, in a second font.
+    let faces = pdfcraft_fonts::document_japanese_fonts_for_style(false, false);
+    let missing = (0x4E00u32..0x9FFF)
+        .filter_map(char::from_u32)
+        .find(|ch| faces.iter().all(|face| pdfcraft_fonts::japanese_glyph_from(face, *ch).is_err()))
+        .expect("some CJK character is outside every face");
+    let replacement = format!("{}{missing}", covered_japanese_chars(241));
+    let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
+    let saved = write_incremental(&doc, &SaveOptions::default()).unwrap();
+    let snapshot = doc.clone();
+    let err = text::replace_line(&mut doc, 0, 0, &replacement).unwrap_err().to_string();
+    assert!(err.contains(&format!("U+{:04X}", missing as u32)), "{err}");
+    assert_eq!(write_incremental(&doc, &SaveOptions::default()).unwrap(), saved);
+    assert_eq!(write_incremental(&snapshot, &SaveOptions::default()).unwrap(), saved);
+}
+
+/// Runs that change font move nothing: with two glyphs per font the text reads back the same, in the
+/// same box as with one font, and the font is switched only where the text moves to another font.
+#[test]
+fn japanese_fallback_split_across_fonts_keeps_order_and_positions() {
+    if without_craft_fonts("japanese_fallback_split_across_fonts_keeps_order_and_positions") {
+        return;
+    }
+    // 見 and 商 are in the first font, 御 in the second: runs [見商], [御], [見], three switches.
+    let replacement = "見商御見";
+    let mut whole = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
+    let mut split = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
+    text::replace_line_with_limit(&mut whole, 0, 0, replacement, 240).unwrap();
+    text::replace_line_with_limit(&mut split, 0, 0, replacement, 2).unwrap();
+    let (whole, split) = (reopen(&whole), reopen(&split));
+    assert_eq!(fallback_fonts(&whole).len(), 1);
+    assert_eq!(fallback_fonts(&split).len(), 2);
+    let (one, many) = (text::text_lines(&whole, 0).unwrap(), text::text_lines(&split, 0).unwrap());
+    assert_eq!(many.len(), 1, "one line: {:?}", many.iter().map(|l| &l.text).collect::<Vec<_>>());
+    assert_eq!(many[0].text, replacement);
+    for (a, b) in one[0].rect.iter().zip(many[0].rect.iter()) {
+        assert!((a - b).abs() < 1e-6, "box {:?} vs {:?}", one[0].rect, many[0].rect);
+    }
+    // One `Tf` per run plus the page's own switch to F2 and the switch back after the text.
+    let content = String::from_utf8_lossy(&page_content_bytes(&split, 0)).into_owned();
+    assert_eq!(content.matches(" Tf").count(), 5, "{content}");
+    let content = String::from_utf8_lossy(&page_content_bytes(&whole, 0)).into_owned();
+    assert_eq!(content.matches(" Tf").count(), 3, "{content}");
+}
+
+/// Only a change of font gets a `Tf`: alternating characters with one glyph per font switch at every
+/// character, and a run of one font's characters switches nowhere.
+#[test]
+fn japanese_fallback_switches_font_only_between_runs() {
+    if without_craft_fonts("japanese_fallback_switches_font_only_between_runs") {
+        return;
+    }
+    let alternating = "見商".repeat(500);
+    let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
+    text::replace_line_with_limit(&mut doc, 0, 0, &alternating, 1).unwrap();
+    let reopened = reopen(&doc);
+    assert_eq!(text::text_lines(&reopened, 0).unwrap()[0].text, alternating);
+    let content = String::from_utf8_lossy(&page_content_bytes(&reopened, 0)).into_owned();
+    assert_eq!(content.matches(" Tf").count(), 1000 + 2, "1000 runs, the F2 switch before and after");
+    let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
+    text::replace_line_with_limit(&mut doc, 0, 0, "見見見", 1).unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&reopen(&doc), 0)).into_owned();
+    assert_eq!(content.matches(" Tf").count(), 1 + 1 + 1, "{content}");
+}
+
+/// A paragraph set in several fallback fonts reads back as one block with the same text, and it
+/// wraps across lines.
+#[test]
+fn japanese_paragraph_split_across_fonts_reads_back_as_one_block() {
+    if without_craft_fonts("japanese_paragraph_split_across_fonts_reads_back_as_one_block") {
+        return;
+    }
+    // Spaces are glyphs too, so two glyphs per font needs several fonts; the narrow box wraps the text.
+    let replacement = "見 商 御 見 商";
+    let style = text::BlockStyle { width: Some(40.0), ..Default::default() };
+    let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
+    text::rewrite_block_with_limit(&mut doc, 0, 0, Some(replacement), &style, 2).unwrap();
+    let reopened = reopen(&doc);
+    assert!(fallback_fonts(&reopened).len() >= 2);
+    let blocks = text::text_blocks(&reopened, 0).unwrap();
+    assert_eq!(blocks.len(), 1, "one paragraph: {:?}", blocks.iter().map(|b| &b.text).collect::<Vec<_>>());
+    assert_eq!(blocks[0].text, replacement);
+    assert!(blocks[0].lines.len() > 1, "wrapped to {} line(s)", blocks[0].lines.len());
+}
+
+/// A paragraph whose move or width is refused (not finite, or drawn in a space it cannot be moved in)
+/// leaves the document as it was: the fallback fonts are written only once the edit is accepted.
+#[test]
+fn japanese_paragraph_refused_before_its_fallback_fonts_are_written() {
+    if without_craft_fonts("japanese_paragraph_refused_before_its_fallback_fonts_are_written") {
+        return;
+    }
+    let plain = "BT /F2 12 Tf 72 700 Td (ab) Tj ET";
+    let cases = [
+        (plain, text::BlockStyle { offset: Some([f64::NAN, 0.0]), ..Default::default() }, "can't be moved that far"),
+        (plain, text::BlockStyle { width: Some(f64::INFINITY), ..Default::default() }, "width must be a number"),
+        (
+            "0 0 0 0 0 0 cm BT /F2 12 Tf 72 700 Td (ab) Tj ET",
+            text::BlockStyle { offset: Some([5.0, 0.0]), ..Default::default() },
+            "can't be moved in",
+        ),
+    ];
+    for (content, style, message) in cases {
+        let mut doc = text_page(content);
+        let saved = write_incremental(&doc, &SaveOptions::default()).unwrap();
+        let err = text::rewrite_block(&mut doc, 0, 0, Some("見本商会　御中"), &style).unwrap_err().to_string();
+        assert!(err.contains(message), "{err}");
+        assert_eq!(write_incremental(&doc, &SaveOptions::default()).unwrap(), saved, "{message}: the document changed");
+    }
+}
+
 /// Every Type 3 fallback glyph starts with a well-formed `d1`: six operands, the second 0, and a
 /// box that encloses every point of the glyph. Acrobat shows a bullet for a glyph whose `d1`
 /// has the wrong operand count.
@@ -791,6 +1406,179 @@ fn missing_glyphs_preserve_source_style_in_fallback() {
     let bytes = page_content_bytes(&doc, 0);
     let content = String::from_utf8_lossy(&bytes);
     assert!(content.contains("/PCEdHelveticaBoldOblique 12 Tf"), "{content}");
+}
+
+#[test]
+fn a_subset_without_a_space_glyph_keeps_its_font_when_editing_words() {
+    for paragraph in [false, true] {
+        let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj /F1 12 Tf ( ) Tj /F2 12 Tf (ba) Tj ET");
+        assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].text, "ab ba");
+        let edit = if paragraph { text::replace_block(&mut doc, 0, 0, "ba ab ba") } else { text::replace_line(&mut doc, 0, 0, "ba ab ba") };
+        assert_eq!(edit.unwrap().substituted, None);
+        let lines = text::text_lines(&reopen(&doc), 0).unwrap();
+        assert_eq!(lines[0].text, "ba ab ba");
+        assert_eq!(lines[0].font, "F2");
+        assert!((lines[0].rect[2] - lines[0].rect[0]) > 3.0 * 12.0);
+    }
+}
+
+/// A Chrome (Skia) style subset: Type0/Identity-H over a TrueType program, CID = glyph id.
+/// `/W` lists most used glyphs, writes 0 for some it dropped, and leaves `a` and `y` to `/DW`;
+/// `z` has a ToUnicode entry but no glyph in the program (its CID is past the last glyph).
+fn skia_subset_page() -> Document {
+    // Inter's glyph ids: P 375, o 790, l 736, a 507, n 773, d 597, G 141, e 614, r 852, m 766, y 998, space 1777.
+    let mut doc = text_page(
+        "BT /F3 12 Tf 72 700 Td <0177031602E001FB03050255> Tj ET \
+         BT /F3 12 Tf 72 650 Td <008D0266035402FE01FB030503E606F101FB0305025506F102FE031603540266> Tj ET",
+    );
+    let program = doc.add(Object::Stream(Stream::flate(Dict::new(), include_bytes!("../../../assets/fonts/Inter-Regular.ttf"))));
+    let unicode = doc.add(Object::Stream(Stream::flate(
+        Dict::new(),
+        b"1 begincodespacerange <0000> <FFFF> endcodespacerange 13 beginbfchar <0177> <0050> <0316> <006F> <02E0> <006C> \
+          <01FB> <0061> <0305> <006E> <0255> <0064> <008D> <0047> <0266> <0065> <0354> <0072> <02FE> <006D> <03E6> <0079> \
+          <06F1> <0020> <1000> <007A> endbfchar",
+    )));
+    let widths: Vec<Object> = [(0x8D, 746), (0x177, 639), (0x255, 612), (0x266, 583), (0x2E0, 242), (0x2FE, 876), (0x305, 591), (0x316, 600)]
+        .into_iter()
+        .chain([(0x354, 376), (0x355, 0), (0x356, 0), (0x6F1, 281)])
+        .flat_map(|(cid, width)| [Object::Int(cid), Object::Array(vec![Object::Int(width)])])
+        .collect();
+    let descriptor = Dict::from_iter([
+        (b"Type".to_vec(), Object::name("FontDescriptor")),
+        (b"FontName".to_vec(), Object::name("BAAAAA+SampleSans")),
+        (b"Flags".to_vec(), Object::Int(32)),
+        (b"FontFile2".to_vec(), Object::Ref(program)),
+    ]);
+    let cid_font = Dict::from_iter([
+        (b"Type".to_vec(), Object::name("Font")),
+        (b"Subtype".to_vec(), Object::name("CIDFontType2")),
+        (b"BaseFont".to_vec(), Object::name("BAAAAA+SampleSans")),
+        (b"CIDToGIDMap".to_vec(), Object::name("Identity")),
+        (b"DW".to_vec(), Object::Int(562)),
+        (b"W".to_vec(), Object::Array(widths)),
+        (b"FontDescriptor".to_vec(), Object::Dict(descriptor)),
+    ]);
+    let font = Dict::from_iter([
+        (b"Type".to_vec(), Object::name("Font")),
+        (b"Subtype".to_vec(), Object::name("Type0")),
+        (b"BaseFont".to_vec(), Object::name("BAAAAA+SampleSans")),
+        (b"Encoding".to_vec(), Object::name("Identity-H")),
+        (b"DescendantFonts".to_vec(), Object::Array(vec![Object::Dict(cid_font)])),
+        (b"ToUnicode".to_vec(), Object::Ref(unicode)),
+    ]);
+    let p = pdfcraft_model::pages(&doc)[0].obj;
+    let fonts = Dict::from_iter([(b"F3".to_vec(), Object::Dict(font))]);
+    doc.update_dict(p, |d| d.set(b"Resources".to_vec(), Object::Dict(Dict::from_iter([(b"Font".to_vec(), Object::Dict(fonts))])))).unwrap();
+    doc
+}
+
+#[test]
+fn a_subset_keeps_its_font_for_glyphs_left_to_the_default_width() {
+    let doc = skia_subset_page();
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(), ["Poland", "Germany and more"]);
+    // Deleting words only, and replacing a word with one drawn elsewhere on the page (`y` and `a`
+    // have no /W entry): every glyph is in the subset, so the font stays.
+    for (block, text) in [(1, "Germany"), (0, "Germany")] {
+        let mut doc = doc.clone();
+        assert_eq!(text::replace_block(&mut doc, 0, block, text).unwrap().substituted, None, "{text}");
+        let lines = text::text_lines(&reopen(&doc), 0).unwrap();
+        assert_eq!(lines.iter().find(|l| l.text == text).unwrap().font, "F3");
+    }
+    // `z` maps to a CID the program has no glyph for: that still needs another font.
+    let mut doc = doc.clone();
+    assert!(text::replace_block(&mut doc, 0, 0, "Graz").unwrap().substituted.is_some());
+}
+
+#[test]
+fn spaces_in_another_subset_do_not_split_a_line() {
+    let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Hello) Tj /F2 12 Tf ( ) Tj /F1 12 Tf (world) Tj ET");
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].text, "Hello world");
+    text::replace_block(&mut doc, 0, 0, "Goodbye").unwrap();
+    assert_eq!(text::text_blocks(&reopen(&doc), 0).unwrap()[0].text, "Goodbye");
+}
+
+#[test]
+fn editor_background_removes_glyphs_but_preserves_following_text_advance() {
+    for show in ["(Hello) Tj", "[(He) -20 (llo)] TJ", "(Hello) '", "2 1 (Hello) \""] {
+        let mut doc = text_page(&format!("BT /F1 12 Tf 14 TL 72 700 Td {show} [-3000] TJ /F2 12 Tf (ab) Tj ET"));
+        let before = text::text_lines(&doc, 0).unwrap();
+        assert_eq!(before.len(), 2);
+        text::clear_block(&mut doc, 0, 0).unwrap();
+        let after = text::text_lines(&reopen(&doc), 0).unwrap();
+        assert_eq!(after.len(), 1, "{show}");
+        assert_eq!(after[0].text, "ab");
+        for (a, b) in after[0].rect.iter().zip(before[1].rect) {
+            assert!((a - b).abs() < 1e-6, "unselected text moved: {show}");
+        }
+    }
+}
+
+#[test]
+fn editor_background_refuses_clipping_text_without_mutation() {
+    let mut doc = text_page("BT /F1 12 Tf 7 Tr 72 700 Td (Clip) Tj ET");
+    let before = page_content_bytes(&doc, 0);
+    assert!(text::clear_block(&mut doc, 0, 0).is_err());
+    assert_eq!(page_content_bytes(&doc, 0), before);
+}
+
+#[test]
+fn explicit_colour_spaces_expose_the_text_colour() {
+    let doc = text_page("/DeviceRGB cs 0 0.23 0.45 sc BT /F1 12 Tf 72 700 Td (Blue) Tj ET");
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].color, [0.0, 0.23, 0.45]);
+}
+
+#[test]
+fn words_in_separate_text_objects_form_one_editable_paragraph() {
+    let mut doc = text_page(
+        "BT /F1 12 Tf 1 0 0 1 72 700 Tm (Hello) Tj ET \
+         BT /F1 12 Tf 1 0 0 1 103 700 Tm (world) Tj ET \
+         BT /F1 12 Tf 1 0 0 1 72 685 Tm (Second) Tj ET \
+         BT /F1 12 Tf 1 0 0 1 117 685 Tm (line) Tj ET \
+         BT /F1 12 Tf 1 0 0 1 300 700 Tm (Other column) Tj ET",
+    );
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0].text, "Hello world Second line");
+    assert_eq!(blocks[0].lines.len(), 2);
+    let other = blocks[1].rect;
+    text::replace_block(&mut doc, 0, 0, "Replacement").unwrap();
+    let blocks = text::text_blocks(&reopen(&doc), 0).unwrap();
+    assert_eq!(blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(), ["Replacement", "Other column"]);
+    assert_eq!(blocks[1].rect, other);
+}
+
+#[test]
+fn independent_text_objects_with_different_transforms_stay_separate() {
+    let doc = text_page(
+        "BT /F1 12 Tf 1 0 0 1 72 700 Tm (Hello) Tj ET \
+         BT /F1 12 Tf 0 1 -1 0 103 700 Tm (Vertical) Tj ET",
+    );
+    assert_eq!(text::text_lines(&doc, 0).unwrap().len(), 2);
+}
+
+/// A negative font size or `Tz` runs the glyphs backwards along the text matrix: each word's
+/// `ink` box still spans all its glyphs, not only the first.
+#[test]
+fn word_boxes_span_whole_words_when_glyphs_run_backwards() {
+    // "someone@example.com" in Helvetica 11 is 121.814 pt wide.
+    for content in [
+        "BT /F1 -11 Tf -1 0 0 1 300 742 Tm (Mail the team: someone@example.com) Tj ET",
+        "BT /F1 11 Tf -100 Tz 300 742 Td (Mail the team: someone@example.com) Tj ET",
+    ] {
+        let lines = text::text_lines(&text_page(content), 0).unwrap();
+        assert_eq!(lines.len(), 1, "{content}");
+        let ink = &lines[0].ink;
+        assert_eq!(ink.len(), 4, "{content}: {ink:?}");
+        let width = |r: &[f64; 4]| r[2] - r[0];
+        assert!(ink.iter().all(|r| width(r) > 5.0), "{content}: {ink:?}");
+        let address = ink.iter().map(width).fold(0.0, f64::max);
+        assert!((address - 121.814).abs() < 0.01, "{content}: {ink:?}");
+        let (x0, x1) = ink.iter().fold((f64::MAX, f64::MIN), |(a, b), r| (a.min(r[0]), b.max(r[2])));
+        assert!(x0 >= lines[0].rect[0] - 0.01 && x1 <= lines[0].rect[2] + 0.01, "{content}: {ink:?} {:?}", lines[0].rect);
+    }
 }
 
 #[test]
@@ -1003,7 +1791,10 @@ fn page_content_bytes(doc: &Document, page: usize) -> Vec<u8> {
 
 /// A page drawing image XObject /Im0 at 100,100 size 200 × 100 (pixels 4 × 2).
 fn image_page() -> Document {
-    let content = "q 200 0 0 100 100 100 cm /Im0 Do Q BT /F1 12 Tf 72 700 Td (Caption) Tj ET";
+    image_page_with("q 200 0 0 100 100 100 cm /Im0 Do Q BT /F1 12 Tf 72 700 Td (Caption) Tj ET")
+}
+
+fn image_page_with(content: &str) -> Document {
     let objs: Vec<String> = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".into(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
@@ -1027,8 +1818,106 @@ fn image_page() -> Document {
     Document::open(Arc::new(out)).unwrap()
 }
 
+/// The box of the first `re` on the page in user space, after the `cm`s before it.
+fn first_rect_in_user_space(doc: &Document) -> [f64; 4] {
+    let mut ctm = pdfcraft_content::Matrix::IDENTITY;
+    for op in pdfcraft_content::parse(&page_content_bytes(doc, 0)).ops {
+        if op.is("cm") {
+            ctm = pdfcraft_content::Matrix(op.nums::<6>().unwrap()).then(&ctm);
+        } else if op.is("re") {
+            let [x, y, w, h] = op.nums::<4>().unwrap();
+            return ctm.bbox([x, y, x + w, y + h]);
+        }
+    }
+    panic!("no clip rectangle");
+}
+
+#[test]
+fn moving_an_image_moves_its_own_clip_too() {
+    let content = "q 100 100 200 100 re W* n 200 0 0 100 100 100 cm /Im0 Do Q BT /F1 12 Tf 72 700 Td (Caption) Tj ET";
+    let target = [50.0, 400.0, 350.0, 600.0];
+    let mut doc = image_page_with(content);
+    let before = images::page_images(&doc, 0).unwrap()[0].rect;
+    images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(images::rect_to_rect(before, target))).unwrap();
+    let mut doc = reopen(&doc);
+    assert!(close(images::page_images(&doc, 0).unwrap()[0].rect, target));
+    assert!(close(first_rect_in_user_space(&doc), target), "{:?}", first_rect_in_user_space(&doc));
+    // A second edit still finds the clip, now behind the `cm` the first one put before it.
+    let moved = [80.0, 420.0, 380.0, 620.0];
+    images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(images::rect_to_rect(target, moved))).unwrap();
+    assert!(close(first_rect_in_user_space(&doc), moved));
+    images::translate_images(&mut doc, 0, &[0], [10.0, 0.0]).unwrap();
+    assert!(close(images::page_images(&doc, 0).unwrap()[0].rect, [90.0, 420.0, 390.0, 620.0]));
+    assert!(close(first_rect_in_user_space(&doc), [90.0, 420.0, 390.0, 620.0]));
+    // Moving it with the group move helper takes the clip along as well.
+    let mut doc = image_page_with(content);
+    images::translate_images(&mut doc, 0, &[0], [30.0, -20.0]).unwrap();
+    assert!(close(images::page_images(&doc, 0).unwrap()[0].rect, [130.0, 80.0, 330.0, 180.0]));
+    assert!(close(first_rect_in_user_space(&doc), [130.0, 80.0, 330.0, 180.0]));
+    // A clip shared with other drawing is left where it is.
+    let shared = "q 100 100 200 100 re W n q 200 0 0 100 100 100 cm /Im0 Do Q 0 0 10 10 re f Q";
+    let mut doc = image_page_with(shared);
+    images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(images::rect_to_rect(before, target))).unwrap();
+    assert!(close(first_rect_in_user_space(&doc), [100.0, 100.0, 300.0, 200.0]));
+}
+
 fn close(a: [f64; 4], b: [f64; 4]) -> bool {
     a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
+}
+
+/// The deepest `q` nesting on the page.
+fn q_depth(doc: &Document) -> usize {
+    let mut depth = 0_usize;
+    let mut deepest = 0;
+    for op in pdfcraft_content::parse(&page_content_bytes(doc, 0)).ops {
+        if op.is("q") {
+            depth += 1;
+            deepest = deepest.max(depth);
+        } else if op.is("Q") {
+            depth = depth.saturating_sub(1);
+        }
+    }
+    deepest
+}
+
+#[test]
+fn repeated_image_edits_change_one_transform_instead_of_nesting() {
+    let variants = [
+        // Its own placement, a private crop, and a bare `Do` that the first edit wraps.
+        "q 200 0 0 100 100 100 cm /Im0 Do Q BT /F1 12 Tf 72 700 Td (Caption) Tj ET",
+        "q 100 100 200 100 re W* n 200 0 0 100 100 100 cm /Im0 Do Q BT /F1 12 Tf 72 700 Td (Caption) Tj ET",
+        "200 0 0 100 100 100 cm /Im0 Do",
+    ];
+    for content in variants {
+        let mut doc = image_page_with(content);
+        let resize = |doc: &mut Document, n: usize| -> usize {
+            let mut depth = 0;
+            for i in 0..n {
+                let r = images::page_images(doc, 0).unwrap()[0].visible_rect.unwrap();
+                // Grow by 3% about the lower-left corner and move right by 2, staying on the page.
+                let target = [r[0] + 2.0, r[1], r[0] + 2.0 + (r[2] - r[0]) * 1.03, r[1] + (r[3] - r[1]) * 1.03];
+                images::change_image(doc, 0, 0, &images::ImageChange::Transform(images::rect_to_rect(r, target))).unwrap();
+                let after = images::page_images(doc, 0).unwrap()[0].visible_rect.unwrap();
+                assert!(after.iter().zip(target).all(|(a, b)| (a - b).abs() < 1e-6), "{content}: {after:?} vs {target:?}");
+                if i == 0 {
+                    depth = q_depth(doc);
+                }
+            }
+            depth
+        };
+        let first = resize(&mut doc, 20);
+        assert_eq!(q_depth(&doc), first, "{content}: twenty resizes nest no deeper than one");
+        let mut doc = reopen(&doc);
+        let before = images::page_images(&doc, 0).unwrap()[0].rect;
+        for _ in 0..20 {
+            images::translate_images(&mut doc, 0, &[0], [1.0, -2.0]).unwrap();
+        }
+        let after = images::page_images(&doc, 0).unwrap()[0].rect;
+        assert!(close(after, [before[0] + 20.0, before[1] - 40.0, before[2] + 20.0, before[3] - 40.0]), "{content}: {after:?}");
+        assert_eq!(q_depth(&doc), first, "{content}: group moves change the same transform");
+        let caption: Vec<_> = text::text_lines(&doc, 0).unwrap().into_iter().map(|l| l.text).collect();
+        assert_eq!(caption.is_empty(), !content.contains("Caption"), "{content}: the text after the image is untouched");
+    }
 }
 
 #[test]
@@ -1286,6 +2175,52 @@ fn a_line_drawn_twice_is_replaced_everywhere() {
 }
 
 #[test]
+fn replacing_a_line_keeps_a_distinct_nearby_line() {
+    // 12 pt lines 6 pt apart: the glyph boxes overlap by more than half the smaller box,
+    // but the baselines are different lines (#1316).
+    let src = "BT /F1 12 Tf 1 0 0 1 72 700 Tm (Alpha) Tj 0 -6 Td (Beta) Tj ET";
+    let listed = |doc: &Document| text::text_lines(doc, 0).unwrap().into_iter().map(|l| l.text).collect::<Vec<_>>();
+    for paragraph in [false, true] {
+        let mut doc = text_page(src);
+        assert_eq!(listed(&doc), ["Alpha", "Beta"]);
+        assert_eq!(text::text_blocks(&doc, 0).unwrap().len(), 2);
+        if paragraph {
+            text::rewrite_block(&mut doc, 0, 0, Some("ALPHA"), &text::BlockStyle::default()).unwrap();
+        } else {
+            text::replace_line(&mut doc, 0, 0, "ALPHA").unwrap();
+        }
+        assert_eq!(listed(&doc), ["ALPHA", "Beta"]);
+        assert!(String::from_utf8_lossy(&page_content_bytes(&doc, 0)).contains("(Beta)"));
+        for bytes in [write_incremental(&doc, &SaveOptions::default()).unwrap(), write_full(&doc, &SaveOptions::default()).unwrap()] {
+            let back = Document::open(Arc::new(bytes)).unwrap();
+            assert!(back.repair_log().is_empty());
+            assert_eq!(listed(&back), ["ALPHA", "Beta"]);
+        }
+    }
+    // The same word on the next line is still a different line.
+    let mut same = text_page("BT /F1 12 Tf 1 0 0 1 72 700 Tm (Alpha) Tj 0 -6 Td (Alpha) Tj ET");
+    text::replace_line(&mut same, 0, 0, "ALPHA").unwrap();
+    assert_eq!(listed(&same), ["ALPHA", "Alpha"]);
+    // Ordinary leading, and a paragraph far enough to group apart, keep the neighbour.
+    let mut spaced = text_page("BT /F1 12 Tf 1 0 0 1 72 700 Tm (Alpha) Tj 0 -14.4 Td (Beta) Tj ET");
+    text::replace_line(&mut spaced, 0, 0, "ALPHA").unwrap();
+    assert_eq!(listed(&spaced), ["ALPHA", "Beta"]);
+    let mut apart = text_page("BT /F1 12 Tf 1 0 0 1 72 700 Tm (Alpha) Tj 0 -40 Td (Beta) Tj ET");
+    text::rewrite_block(&mut apart, 0, 0, Some("ALPHA"), &text::BlockStyle::default()).unwrap();
+    assert_eq!(listed(&apart), ["ALPHA", "Beta"]);
+    // A second copy at the same position is still one replacement.
+    for paragraph in [false, true] {
+        let mut duplicate = text_page("BT /F1 12 Tf 1 0 0 1 72 700 Tm (Alpha) Tj ET BT /F1 12 Tf 1 0 0 1 72 700 Tm (Alpha) Tj ET");
+        if paragraph {
+            text::rewrite_block(&mut duplicate, 0, 0, Some("ALPHA"), &text::BlockStyle::default()).unwrap();
+        } else {
+            text::replace_line(&mut duplicate, 0, 0, "ALPHA").unwrap();
+        }
+        assert_eq!(listed(&duplicate), ["ALPHA"]);
+    }
+}
+
+#[test]
 fn paragraphs_move_and_rewrap_to_a_new_width() {
     let para = "BT /F1 10 Tf 12 TL 100 700 Td (One two three four five six seven) Tj T* (eight nine ten eleven twelve) Tj ET";
     let close = |a: f64, b: f64| (a - b).abs() < 0.5;
@@ -1373,6 +2308,206 @@ fn the_graphics_state_carries_over_between_content_streams() {
     let doc = split_page("q 0.5 0 0 0.5 0 0 cm", "Q BT /F1 10 Tf 100 100 Td (Footpath) Tj ET");
     let l = &text::text_lines(&doc, 0).unwrap()[0];
     assert!(close(l.rect[0], 100.0) && close(l.size, 10.0), "{l:?}");
+}
+
+/// One page whose font draws a few Hebrew letters (ToUnicode): A ב, B ד, C י, D ו, E ק, F ש,
+/// G ל, H ם. Content streams draw Hebrew in visual order, so "בדיוק" is `(EDCBA)`.
+fn hebrew_page(content: &str) -> Document {
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapType 2 def \
+                1 begincodespacerange <00> <FF> endcodespacerange 9 beginbfchar \
+                <20> <0020> <41> <05D1> <42> <05D3> <43> <05D9> <44> <05D5> <45> <05E7> <46> <05E9> <47> <05DC> <48> <05DD> \
+                endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
+    // Widths for codes 32..=72: a space, then the eight letters at 65..=72.
+    let widths: Vec<&str> = (32..=72)
+        .map(|c| {
+            if c == 32 {
+                "250"
+            } else if c >= 65 {
+                "500"
+            } else {
+                "0"
+            }
+        })
+        .collect();
+    let objs: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        format!(
+            "<< /Type /Font /Subtype /Type1 /BaseFont /ABCDEF+FakeHebrew /FirstChar 32 /LastChar 72 /Widths [{}] /ToUnicode 6 0 R >>",
+            widths.join(" ")
+        ),
+        format!("<< /Length {} >>\nstream\n{cmap}\nendstream", cmap.len()),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offs = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offs.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let x = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for o in offs {
+        out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{x}\n%%EOF\n", objs.len() + 1).as_bytes());
+    Document::open(Arc::new(out)).unwrap()
+}
+
+/// The report: Edit text showed "בדיוק" (exactly) reversed, because the line was read in the
+/// order the page draws it.
+#[test]
+fn hebrew_lines_read_in_typing_order() {
+    let doc = hebrew_page("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET BT /F1 12 Tf 300 600 Td (EDCBA HDGF) Tj ET");
+    let lines: Vec<String> = text::text_lines(&doc, 0).unwrap().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["בדיוק", "שלום בדיוק"]);
+    let blocks: Vec<String> = text::text_blocks(&doc, 0).unwrap().into_iter().map(|b| b.text).collect();
+    assert_eq!(blocks, ["בדיוק", "שלום בדיוק"]);
+}
+
+/// Text the page's own font can show is written back in drawing order, right-aligned to where
+/// the line ended, and reads back as typed.
+#[test]
+fn hebrew_edits_are_drawn_right_to_left_and_keep_their_right_edge() {
+    let mut doc = hebrew_page("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET");
+    let before = text::text_lines(&doc, 0).unwrap()[0].rect;
+    // One line: the bytes are the visual order of the typed text.
+    assert_eq!(text::replace_line(&mut doc, 0, 0, "שלום בדיוק").unwrap().substituted, None);
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(content.contains("(EDCBA HDGF)"), "{content}");
+    assert_eq!(text::text_lines(&reopen(&doc), 0).unwrap()[0].text, "שלום בדיוק");
+
+    // A paragraph: shorter text stays right-aligned at the old right edge.
+    let mut doc = hebrew_page("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET");
+    assert_eq!(text::replace_block(&mut doc, 0, 0, "דוב").unwrap().substituted, None);
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(content.contains("(ADB)"), "{content}");
+    let doc = reopen(&doc);
+    let line = text::text_lines(&doc, 0).unwrap().swap_remove(0);
+    assert_eq!(line.text, "דוב");
+    assert!((line.rect[2] - before[2]).abs() < 0.5, "right edge {} → {}", before[2], line.rect[2]);
+    assert!(line.rect[0] > before[0] + 1.0, "shorter text starts further right: {:?} vs {before:?}", line.rect);
+
+    // Longer text grows to the left, not off the right edge.
+    let mut doc = hebrew_page("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET");
+    text::replace_block(&mut doc, 0, 0, "שלום בדיוק שלום").unwrap();
+    let doc = reopen(&doc);
+    let line = text::text_lines(&doc, 0).unwrap().swap_remove(0);
+    assert_eq!(line.text, "שלום בדיוק שלום");
+    assert!((line.rect[2] - before[2]).abs() < 0.5, "right edge {} → {}", before[2], line.rect[2]);
+    assert!(line.rect[0] < before[0] - 1.0, "longer text grows left: {:?} vs {before:?}", line.rect);
+
+    // An alignment asked for still wins.
+    let mut doc = hebrew_page("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET");
+    let left = text::BlockStyle { align: Some(Align::Left), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some("דוב"), &left).unwrap();
+    let line = text::text_lines(&reopen(&doc), 0).unwrap().swap_remove(0);
+    assert!((line.rect[0] - before[0]).abs() < 0.5, "left-aligned: {:?} vs {before:?}", line.rect);
+}
+
+/// A generated Type 3 font numbers its glyphs from 1, so code 32 is a character, not the space:
+/// justified rows are stretched after each space, never with word spacing.
+#[test]
+fn justified_text_in_the_type3_fallback_stretches_its_spaces() {
+    let src = "BT /F1 12 Tf 14 TL 100 700 Td (Some words to fill a row of text) Tj T* (and another one below it) Tj T* (end) Tj ET";
+    let mut doc = text_page(src);
+    let rect = text::text_blocks(&doc, 0).unwrap()[0].rect;
+    // More than 32 different characters, so one of them gets code 32.
+    let typed = "日本語の 文章を 書きます 東京 大阪 京都 名古屋 札幌 福岡 神戸 横浜 仙台 広島 千葉 新潟 静岡 熊本 岡山 金沢";
+    let style = text::BlockStyle { align: Some(added::Align::Justify), ..Default::default() };
+    let rewritten = text::rewrite_block(&mut doc, 0, 0, Some(typed), &style);
+    if pdfcraft_fonts::document_japanese_font().is_none() {
+        assert!(rewritten.is_err());
+        eprintln!("built without a craft-fonts Japanese face: the Type 3 path is checked with CRAFT_FONTS_DIR");
+        return;
+    }
+    rewritten.unwrap();
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert!(lines.len() > 2, "{lines:?}");
+    for l in &lines[..lines.len() - 1] {
+        assert!((l.rect[2] - rect[2]).abs() < 1.0, "{:?} spans {:?}, not {rect:?}", l.text, l.rect);
+    }
+    let ops = pdfcraft_content::parse(&page_content_bytes(&doc, 0)).ops;
+    assert!(ops.iter().any(|o| o.is("TJ")), "{ops:?}");
+    assert!(ops.iter().filter(|o| o.is("Tw")).all(|o| o.operands.first().and_then(|n| n.as_f64()) == Some(0.0)), "{ops:?}");
+}
+
+/// Letters the page's font lacks are drawn with the Hebrew face from craft-fonts; a build
+/// without it says so and changes nothing. Hebrew points are refused, not misdrawn.
+#[test]
+fn hebrew_letters_the_page_font_lacks_use_the_hebrew_face() {
+    let mut doc = hebrew_page("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET");
+    let before = page_content_bytes(&doc, 0);
+    let pointed = text::replace_line(&mut doc, 0, 0, "שָׁלוֹם עוֹלָם");
+    let Err(EditError::Invalid(msg)) = pointed else { panic!("expected a clear error, got {pointed:?}") };
+    assert!(msg.contains("niqqud"), "{msg}");
+    assert_eq!(page_content_bytes(&doc, 0), before);
+
+    // ע and ה aren't in the page's font.
+    let typed = "שלום עולם, עמוד 12 (PDF)";
+    let line = text::replace_line(&mut doc, 0, 0, typed);
+    if pdfcraft_fonts::document_hebrew_font(false).is_none() {
+        let Err(EditError::Invalid(msg)) = line else { panic!("expected a clear error, got {line:?}") };
+        assert!(msg.contains("Hebrew fallback font") && msg.contains("CRAFT_FONTS_DIR"), "{msg}");
+        assert_eq!(page_content_bytes(&doc, 0), before);
+        eprintln!("built without a craft-fonts Hebrew face: the Type 3 path is checked with CRAFT_FONTS_DIR");
+        return;
+    }
+    assert_eq!(line.unwrap().substituted.as_deref(), Some("Noto Sans Hebrew Type3"));
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(content.contains("/PCHe"), "{content}");
+    let reopened = reopen(&doc);
+    assert_eq!(text::text_lines(&reopened, 0).unwrap()[0].text, typed);
+    // Every glyph has an outline, so nothing is drawn as a box.
+    let p = pdfcraft_model::pages(&reopened).swap_remove(0);
+    let res = reopened.resolve(p.dict.get(b"Resources").unwrap());
+    let fonts = reopened.resolve(res.as_dict().unwrap().get(b"Font").unwrap());
+    let font = reopened.resolve(fonts.as_dict().unwrap().get(b"PCHe").unwrap());
+    let procs = reopened.resolve(font.as_dict().unwrap().get(b"CharProcs").unwrap());
+    let procs = procs.as_dict().unwrap();
+    assert_eq!(procs.iter().count(), typed.chars().collect::<std::collections::HashSet<_>>().len());
+    for (_, glyph) in procs.iter() {
+        let pdfcraft_cos::Object::Stream(s) = &*reopened.resolve(glyph) else { panic!("glyph stream") };
+        let path = String::from_utf8(s.decoded().unwrap()).unwrap();
+        assert!(path.starts_with(|c: char| c.is_ascii_digit()) && path.contains(" d1"), "{path}");
+    }
+
+    // A whole paragraph too, right-aligned.
+    let mut doc = hebrew_page("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET");
+    assert_eq!(text::replace_block(&mut doc, 0, 0, "עברית מלאה").unwrap().substituted.as_deref(), Some("Noto Sans Hebrew Type3"));
+    assert_eq!(text::text_blocks(&reopen(&doc), 0).unwrap()[0].text, "עברית מלאה");
+}
+
+/// #2013: the dialog asks `first_undrawable` before offering OK, so it must refuse exactly what
+/// applying refuses: a Cyrillic footer was previewed (in the interface font) and then failed.
+#[test]
+fn header_and_watermark_drawability_matches_what_applying_refuses() {
+    let footer = |t: &str| HeaderFooter {
+        text: [String::new(), String::new(), String::new(), String::new(), String::new(), t.into()],
+        ..HeaderFooter::default()
+    };
+    for (text, refused) in [
+        ("Страница <<1>> из 1 / Page <<1>> of 1", Some('С')),
+        ("TEST-001 <<Page 1 of n>>", None),
+        ("Café — 5€ ™ <<Bates Number#6#1#ACME-#>>", None),
+        ("Left\r\nRight", None),
+        ("A\rB", Some('\r')),
+        ("line one\nΕλληνικά", Some('Ε')),
+    ] {
+        let hf = footer(text);
+        assert_eq!(hf.first_undrawable(), refused, "{text:?}");
+        let mut doc = fixture();
+        let applied = add_header_footer(&mut doc, &[0], &hf, false, &cx());
+        match refused {
+            Some(c) => assert_eq!(applied.unwrap_err().to_string(), undrawable_message(c), "{text:?}"),
+            None => applied.unwrap(),
+        }
+        let wm = Watermark { text: text.into(), ..Watermark::default() };
+        assert_eq!(wm.first_undrawable(), refused, "{text:?}");
+        let applied = add_watermark(&mut fixture(), &[0], &wm, false);
+        assert_eq!(applied.err().map(|e| e.to_string()), refused.map(undrawable_message), "{text:?}");
+    }
 }
 
 /// #125: page-content tools refuse text the standard fonts can't draw instead of writing `?`,
@@ -1648,6 +2783,37 @@ fn hostile_form_xobjects_are_read_once() {
 }
 
 #[test]
+fn added_thai_text_wraps_clusters_and_survives_reopen() {
+    let mut doc = fixture();
+    let t = AddedText {
+        rect: [20.0, 100.0, 250.0, 300.0], text: "สวัสดี น้ำ ผู้ใช้ ปู่ ๑๒๓ Hello 123".into(), size: 16.0, ..AddedText::default()
+    };
+    if pdfcraft_fonts::document_thai_font().is_none() {
+        assert_eq!(first_undrawable(&t), Some('ส'));
+        let before = list_added(&doc);
+        let err = add_content(&mut doc, 0, &Content::Text(t)).unwrap_err().to_string();
+        assert!(err.contains("Thai") && err.contains("CRAFT_FONTS_DIR"), "{err}");
+        assert_eq!(list_added(&doc), before);
+        return;
+    }
+    assert_eq!(first_undrawable(&t), None);
+    add_content(&mut doc, 0, &Content::Text(t.clone())).unwrap();
+    let reopened = reopen(&doc);
+    assert_eq!(list_added(&reopened)[0].content, Content::Text(AddedText { rect: super::added::text_rect(&t), ..t.clone() }));
+    let narrow = AddedText { rect: [0.0, 0.0, 16.0, 200.0], text: "กิ่กิ่กิ่".into(), ..t.clone() };
+    assert_eq!(super::added::lines(&narrow), ["กิ่", "กิ่", "กิ่"]);
+    update_content(&mut doc, 0, 0, &Content::Text(AddedText { text: "แก้ไข น้ำ".into(), ..t.clone() })).unwrap();
+    assert!(!own(&doc, 0).is_empty());
+    let bad = Content::Text(AddedText { text: "ไทย 日".into(), ..t });
+    let before = list_added(&doc);
+    assert!(update_content(&mut doc, 0, 0, &bad).is_err());
+    assert_eq!(list_added(&doc), before);
+    delete_content(&mut doc, 0, 0).unwrap();
+    assert!(list_added(&doc).is_empty());
+    assert!(arabic_font_names(&doc, 0).is_empty());
+}
+
+#[test]
 fn group_moves_preserve_glyph_bytes_and_unselected_text_state() {
     for content in [
         "BT /F1 12 Tf 1.3 Tc 2 Tw 80 Tz 14 TL 1 0.2 -0.1 1 50 600 Tm (A\\101) Tj 1 0 0 rg (Neighbour) Tj T* (Next) Tj ET",
@@ -1712,13 +2878,25 @@ fn group_moves_preserve_small_offsets_under_large_transforms() {
     let before = editable_objects(&doc, 0).unwrap();
     let targets = before.iter().filter(|o| o.text.as_deref() != Some("Neighbour")).map(|o| o.target).collect::<Vec<_>>();
     assert_eq!(targets.len(), 2);
+    let image_before = images::page_images(&doc, 0).unwrap()[0].rect;
     let offset = [0.00123456789, -0.00987654321];
     move_objects(&mut doc, 0, &targets, offset).unwrap();
-    let after = editable_objects(&reopen(&doc), 0).unwrap();
+    let reopened = reopen(&doc);
+    let image_after = images::page_images(&reopened, 0).unwrap()[0].clone();
+    assert!(
+        close(image_after.rect, [image_before[0] + offset[0], image_before[1] + offset[1], image_before[2] + offset[0], image_before[3] + offset[1]]),
+        "full image placement preserves sub-point movement"
+    );
+    let after = editable_objects(&reopened, 0).unwrap();
     for old in before {
         let new = after.iter().find(|o| o.target == old.target).unwrap();
         let [dx, dy] = if targets.contains(&old.target) { offset } else { [0.0, 0.0] };
-        assert!(close(new.rect, [old.rect[0] + dx, old.rect[1] + dy, old.rect[2] + dx, old.rect[3] + dy]), "{old:?}: {new:?}");
+        if old.target.kind == crate::ObjectKind::Image {
+            // The full placement moves; the visible right/top edges stay at the page crop.
+            assert_eq!(Some(new.rect), image_after.visible_rect);
+        } else {
+            assert!(close(new.rect, [old.rect[0] + dx, old.rect[1] + dy, old.rect[2] + dx, old.rect[3] + dy]), "{old:?}: {new:?}");
+        }
     }
 }
 
@@ -1848,6 +3026,55 @@ fn group_moves_keep_split_stream_tokens_and_shared_form_resources() {
     assert_eq!(after[1].rect, images[1].rect);
     assert_eq!(*doc.get(artwork), *original_form);
     assert_eq!(page_content_bytes(&doc, 1), source_page);
+}
+
+#[test]
+fn justified_text_in_a_composite_font_fills_each_row_with_adjustments_after_its_spaces() {
+    // Two-byte codes, so word spacing (single-byte code 32 only) can't stretch the spaces.
+    let hex = |s: &str| s.bytes().map(|b| format!("00{b:02x}")).collect::<String>();
+    let src = format!(
+        "BT /F1 10 Tf 12 TL 100 700 Td <{}> Tj T* <{}> Tj T* <{}> Tj ET",
+        hex("One two three four five six seven"),
+        hex("eight nine ten eleven twelve"),
+        hex("and then the end of it")
+    );
+    let mut doc = text_page(&src);
+    let unicode = doc.add(Object::Stream(Stream::flate(
+        Dict::new(),
+        b"1 begincodespacerange <0000> <ffff> endcodespacerange 1 beginbfrange <0020> <007e> <0020> endbfrange",
+    )));
+    let font = Dict::from_iter([
+        (b"Type".to_vec(), Object::name("Font")),
+        (b"Subtype".to_vec(), Object::name("Type0")),
+        (b"BaseFont".to_vec(), Object::name("SyntheticCID")),
+        (b"Encoding".to_vec(), Object::name("Identity-H")),
+        (b"ToUnicode".to_vec(), Object::Ref(unicode)),
+        (
+            b"DescendantFonts".to_vec(),
+            Object::Array(vec![Object::Dict(Dict::from_iter([
+                (b"Subtype".to_vec(), Object::name("CIDFontType2")),
+                (b"DW".to_vec(), Object::Int(500)),
+            ]))]),
+        ),
+    ]);
+    let p = pdfcraft_model::pages(&doc)[0].obj;
+    let resources = Dict::from_iter([(b"Font".to_vec(), Object::Dict(Dict::from_iter([(b"F1".to_vec(), Object::Dict(font))])))]);
+    doc.update_dict(p, |d| d.set(b"Resources".to_vec(), Object::Dict(resources))).unwrap();
+    let before = text::text_blocks(&doc, 0).unwrap()[0].clone();
+    let right = before.rect[2];
+    text::rewrite_block(&mut doc, 0, 0, None, &text::BlockStyle { align: Some(added::Align::Justify), ..Default::default() }).unwrap();
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert!(lines.len() > 2, "{lines:?}");
+    for l in &lines[..lines.len() - 1] {
+        assert!((l.rect[2] - right).abs() < 1.0, "{:?} ends at {} not {right}", l.text, l.rect[2]);
+    }
+    // The source font shows the text, with its spaces, and the text reads as before, rewrapped.
+    let flat = |s: &str| s.replace('\n', " ");
+    assert_eq!(flat(&text::text_blocks(&doc, 0).unwrap()[0].editor_text), flat(&before.editor_text));
+    let ops = pdfcraft_content::parse(&page_content_bytes(&doc, 0)).ops;
+    assert!(ops.iter().all(|o| !o.is("Tf") || o.operands.first().and_then(|n| n.as_name()) == Some(b"F1".as_slice())), "{ops:?}");
+    assert!(ops.iter().any(|o| o.is("TJ")), "{ops:?}");
+    assert!(ops.iter().filter(|o| o.is("Tw")).all(|o| o.operands.first().and_then(|n| n.as_f64()) == Some(0.0)), "{ops:?}");
 }
 
 #[test]
@@ -2026,5 +3253,999 @@ fn group_move_budget_refusals_keep_the_original_page_selectable() {
         assert!(error.to_string().contains("too many content operations") || error.to_string().contains("nested too deeply"), "{error}");
         assert_eq!(pdfcraft_cos::write_full(&doc, &SaveOptions::default()).unwrap(), before);
         assert_eq!(editable_objects(&doc, 0).unwrap(), objects, "refusal retains a usable inventory");
+    }
+}
+
+#[test]
+fn arabic_actual_text_keeps_typing_order_when_opened_for_editing() {
+    for logical in ["مرحبا بالعالم", "سَلَام 123 (PDF)", "English مرحبا ١٢٣", "PDFمرحبا", "مرحبا", "שלום עולם", "Latin text"]
+    {
+        let hex: String = logical.encode_utf16().map(|u| format!("{u:04X}")).collect();
+        for drawing in ["(abcd) Tj (efgh) Tj", "(X) Tj"] {
+            let doc = text_page(&format!("/Span <</ActualText <FEFF{hex}>>> BDC BT /F1 12 Tf 72 700 Td {drawing} ET EMC"));
+            for doc in [&doc, &reopen(&doc)] {
+                let lines = text::text_lines(doc, 0).unwrap();
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0].text, logical, "ActualText is already in typing order");
+                assert_eq!(text::text_blocks(doc, 0).unwrap()[0].editor_text, logical);
+            }
+        }
+    }
+}
+
+#[test]
+fn latin_ligature_actual_text_stays_on_its_line() {
+    // Word and Chrome wrap ligatures in ActualText spans mid-word ("ﬁ" drawn, "fi" meant).
+    let hex: String = "fi".encode_utf16().map(|u| format!("{u:04X}")).collect();
+    let doc = text_page(&format!("BT /F1 12 Tf 72 700 Td (de) Tj /Span <</ActualText <FEFF{hex}>>> BDC (X) Tj EMC (ned well) Tj ET"));
+    for doc in [&doc, &reopen(&doc)] {
+        let lines = text::text_lines(doc, 0).unwrap();
+        assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["defined well"]);
+        assert_eq!(text::text_blocks(doc, 0).unwrap()[0].editor_text, "defined well");
+    }
+}
+
+#[test]
+fn actual_text_and_visual_rtl_glyphs_keep_their_own_reading_order() {
+    let hex: String = "שלום".encode_utf16().map(|u| format!("{u:04X}")).collect();
+    let doc = hebrew_page(&format!("BT /F1 12 Tf 72 700 Td (EDCBA) Tj /Span <</ActualText <FEFF{hex}>>> BDC (FGHD) Tj EMC (EDCBA) Tj ET"));
+    for doc in [&doc, &reopen(&doc)] {
+        let lines = text::text_lines(doc, 0).unwrap();
+        assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["בדיוק", "שלום", "בדיוק"]);
+    }
+}
+
+/// Synthetic codes A س, B م and X a lam-alef glyph, drawn from left to right.
+fn arabic_ligature_page(content: &str, composite: bool) -> Document {
+    let prefix = if composite { "00" } else { "" };
+    let cmap = format!(
+        "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapType 2 def \
+         1 begincodespacerange <{prefix}00> <{prefix}FF> endcodespacerange 4 beginbfchar \
+         <{prefix}20> <0020> <{prefix}41> <0633> <{prefix}42> <0645> <{prefix}58> <FEFB> \
+         endbfchar endcmap CMapName currentdict /CMap defineresource pop end end"
+    );
+    let widths: Vec<_> = (32..=88).map(|c| if c == 32 { "250" } else { "500" }).collect();
+    let font = if composite {
+        "<< /Type /Font /Subtype /Type0 /BaseFont /FakeArabic /Encoding /Identity-H /DescendantFonts [7 0 R] /ToUnicode 6 0 R >>".into()
+    } else {
+        format!("<< /Type /Font /Subtype /Type1 /BaseFont /FakeArabic /FirstChar 32 /LastChar 88 /Widths [{}] /ToUnicode 6 0 R >>", widths.join(" "))
+    };
+    build(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        &stream("", content),
+        &font,
+        &stream("", &cmap),
+        "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /FakeArabic /CIDSystemInfo << /Registry (Synthetic) /Ordering (Identity) /Supplement 0 >> /DW 500 /W [32 [250]] >>",
+    ])
+}
+
+#[test]
+fn arabic_ligature_actual_text_stays_on_its_line() {
+    for (ligature, composite) in [("لا", false), ("لأ", false), ("لإ", false), ("لآ", false), ("لَا", false), ("لا", true)] {
+        let hex: String = ligature.encode_utf16().map(|u| format!("{u:04X}")).collect();
+        let (left, glyph, right) = if composite { ("<0042>", "<0058>", "<0041>") } else { ("(B)", "(X)", "(A)") };
+        let doc = arabic_ligature_page(
+            &format!("BT /F1 12 Tf 72 700 Td {left} Tj /Span <</ActualText <FEFF{hex}>>> BDC [{glyph}] TJ EMC {right} Tj ET"),
+            composite,
+        );
+        let expected = format!("س{ligature}م");
+        for doc in [&doc, &reopen(&doc)] {
+            let lines = text::text_lines(doc, 0).unwrap();
+            assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), [expected.as_str()]);
+            assert_eq!(text::text_blocks(doc, 0).unwrap()[0].editor_text, expected);
+        }
+    }
+}
+
+#[test]
+fn multi_glyph_rtl_actual_text_keeps_its_own_reading_order() {
+    // Two encoded glyphs are a logical span, even if their replacement looks like a ligature.
+    for drawing in ["(XX) Tj", "(X) Tj (X) Tj", "[(X) (X)] TJ"] {
+        let doc =
+            arabic_ligature_page(&format!("BT /F1 12 Tf 72 700 Td (B) Tj /Span <</ActualText <FEFF06440627>>> BDC {drawing} EMC (A) Tj ET"), false);
+        let lines = text::text_lines(&doc, 0).unwrap();
+        assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["م", "لا", "س"]);
+    }
+}
+
+#[test]
+fn replacing_word_with_actual_text_ligature_removes_all_its_source_operators() {
+    let mut doc = arabic_ligature_page(
+        "BT /F1 12 Tf 72 700 Td (B) Tj /Span <</ActualText <FEFF06440627>>> BDC /Span BMC (X) Tj EMC EMC (A) Tj ET \
+         BT /F1 12 Tf 72 600 Td (AB) Tj ET",
+        false,
+    );
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, "سلام");
+    text::replace_block(&mut doc, 0, 0, "Replacement").unwrap();
+    let doc = reopen(&doc);
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["Replacement", "مس"]);
+    let bytes = page_content_bytes(&doc, 0);
+    let content = String::from_utf8_lossy(&bytes);
+    assert!(!content.contains("ActualText") && !content.contains("(X)") && !content.contains("(B)") && !content.contains("(A)"), "{content}");
+}
+
+#[test]
+fn replacing_arabic_actual_text_removes_the_whole_original_drawing() {
+    let logical = "مرحبا بالعالم";
+    let hex: String = logical.encode_utf16().map(|u| format!("{u:04X}")).collect();
+    let mut doc = text_page(&format!(
+        "/Span <</ActualText <FEFF{hex}>>> BDC BT /F1 12 Tf 72 700 Td (abcd) Tj (efgh) Tj ET EMC \
+         BT /F1 12 Tf 72 600 Td (Keep this line) Tj ET"
+    ));
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, logical);
+    text::replace_block(&mut doc, 0, 0, "Replacement").unwrap();
+    let doc = reopen(&doc);
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["Replacement", "Keep this line"]);
+    let bytes = page_content_bytes(&doc, 0);
+    let content = String::from_utf8_lossy(&bytes);
+    assert!(!content.contains("ActualText") && !content.contains("(abcd)") && !content.contains("(efgh)"));
+}
+
+fn mixed_region_page() -> Document {
+    let mut doc = text_page(
+        "BT /F2 1 Tf 18 0 0 18 123 700 Tm (TITLE) Tj ET \
+         BT /F2 1 Tf 12 0 0 12 117.6 676 Tm (two lines) Tj ET \
+         BT /F2 1 Tf 12 0 0 12 135.6 652 Tm (last) Tj ET \
+         BT 0 0.2 0.5 rg /F2 10 Tf 72 600 Td (About) Tj ET \
+         BT 0 g /F1 10 Tf 72 582 Td (Plain ) Tj /F2 10 Tf 0 0.2 0.5 rg (bold) Tj /F1 10 Tf 0 g ( text.) Tj ET \
+         BT 0.2 0.4 0.7 rg /F3 8 Tf 72 566 Td (Italic footer) Tj ET \
+         BT 0 g /F1 10 Tf 400 600 Td (Other column) Tj ET",
+    );
+    for (obj, base) in [(5, "Courier"), (6, "Courier-Bold")] {
+        let mut f = Dict::new();
+        f.set(b"Type".to_vec(), Object::name("Font"));
+        f.set(b"Subtype".to_vec(), Object::name("Type1"));
+        f.set(b"BaseFont".to_vec(), Object::name(base));
+        f.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
+        doc.set(pdfcraft_cos::ObjRef::new(obj, 0), Object::Dict(f));
+    }
+    let mut f = Dict::new();
+    f.set(b"Type".to_vec(), Object::name("Font"));
+    f.set(b"Subtype".to_vec(), Object::name("Type1"));
+    f.set(b"BaseFont".to_vec(), Object::name("Courier-Oblique"));
+    f.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
+    let font = doc.add(Object::Dict(f));
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let mut resources = doc.resolve(page.dict.get(b"Resources").unwrap()).as_dict().unwrap().clone();
+    let mut fonts = doc.resolve(resources.get(b"Font").unwrap()).as_dict().unwrap().clone();
+    fonts.set(b"F3".to_vec(), Object::Ref(font));
+    resources.set(b"Font".to_vec(), Object::Dict(fonts));
+    doc.update_dict(page.obj, |d| d.set(b"Resources".to_vec(), Object::Dict(resources))).unwrap();
+    doc
+}
+
+#[test]
+fn mixed_styles_and_matrix_sizes_form_visual_regions_without_merging_columns() {
+    let doc = mixed_region_page();
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks[0].editor_text, "TITLE\ntwo lines\nlast");
+    assert_eq!(blocks[0].rows.len(), 3);
+    assert_eq!(blocks[1].editor_text, "About\nPlain bold text.\nItalic footer");
+    assert_eq!(blocks[1].rows.len(), 3);
+    assert_eq!(blocks[1].lines.len(), 5);
+    assert_eq!(blocks[2].text, "Other column");
+}
+
+#[test]
+fn a_single_row_with_mixed_styles_grows_before_wrapping() {
+    let mut doc = text_page("BT /F1 10 Tf 72 582 Td (Plain ) Tj /F2 10 Tf (bold) Tj /F1 10 Tf ( text.) Tj ET");
+    doc.update_dict(pdfcraft_cos::ObjRef::new(6, 0), |f| {
+        *f = Dict::new();
+        f.set(b"Type".to_vec(), Object::name("Font"));
+        f.set(b"Subtype".to_vec(), Object::name("Type1"));
+        f.set(b"BaseFont".to_vec(), Object::name("Helvetica-Bold"));
+    })
+    .unwrap();
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    let index = blocks.iter().position(|b| b.editor_text == "Plain bold text.").unwrap();
+    let source = &blocks[index];
+    assert_eq!(source.rows.len(), 1);
+    assert!(source.lines.len() > 1);
+    let draft = "Plain bold text. More words on the same line";
+    text::replace_block(&mut doc, 0, index, draft).unwrap();
+    let edited = text::text_blocks(&reopen(&doc), 0).unwrap();
+    let block = edited.iter().find(|b| b.text == draft).unwrap();
+    assert_eq!(block.rows.len(), 1, "a style boundary must not pin a single row to its original width");
+    assert!((block.rect[0] - source.rect[0]).abs() < 0.1);
+    assert!(block.rect[2] > source.rect[2] + 20.0);
+}
+
+#[test]
+fn explicit_editor_rows_survive_single_run_edit_and_reopen() {
+    let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Original heading) Tj ET");
+    let text = "First row\nSecond row\nLast row";
+    let layout = text::text_edit_layout(&doc, 0, 0, text, &text::BlockStyle::default()).unwrap();
+    text::replace_block(&mut doc, 0, 0, text).unwrap();
+    let blocks = text::text_blocks(&reopen(&doc), 0).unwrap();
+    assert_eq!(blocks[0].editor_text, text);
+    assert_eq!(blocks[0].rows.len(), 3);
+    assert_eq!(Some(blocks[0].rect), layout.draft_rect);
+}
+
+#[test]
+fn rich_region_edits_preserve_styles_positions_and_delete_all_runs_after_reopen() {
+    let original = mixed_region_page();
+    let before = text::text_lines(&original, 0).unwrap();
+    let block = text::text_blocks(&original, 0).unwrap()[1].clone();
+    let mut doc = original.clone();
+    text::replace_block(&mut doc, 0, 1, &block.editor_text.replace("Plain", "Other")).unwrap();
+    let reopened = reopen(&doc);
+    let blocks = text::text_blocks(&reopened, 0).unwrap();
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks[1].editor_text, "About\nOther bold text.\nItalic footer");
+    let lines = text::text_lines(&reopened, 0).unwrap();
+    for word in ["About", "bold", "Italic footer"] {
+        let source = before.iter().find(|l| l.text == word).unwrap();
+        let after = lines.iter().find(|l| l.text == word).unwrap();
+        assert_eq!(
+            (after.base_font.as_str(), after.size, after.color, after.bold, after.italic),
+            (source.base_font.as_str(), source.size, source.color, source.bold, source.italic)
+        );
+        assert!((after.origin_baseline() - source.origin_baseline()).abs() < 0.001);
+    }
+    for i in [0, 2] {
+        assert_eq!(blocks[i].editor_text, text::text_blocks(&original, 0).unwrap()[i].editor_text);
+        assert_eq!(blocks[i].rect, text::text_blocks(&original, 0).unwrap()[i].rect);
+    }
+    let mut removed = original.clone();
+    text::replace_block(&mut removed, 0, 1, "").unwrap();
+    let after = text::text_blocks(&reopen(&removed), 0).unwrap();
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[0].editor_text, "TITLE\ntwo lines\nlast");
+    assert_eq!(after[1].text, "Other column");
+    let mut preview = original.clone();
+    text::clear_block(&mut preview, 0, 1).unwrap();
+    assert_eq!(text::text_blocks(&reopen(&preview), 0).unwrap().len(), 2);
+    assert_eq!(text::text_blocks(&original, 0).unwrap().len(), 3);
+}
+
+/// Two edits applied together (heading and footer edited before leaving the editor, #2198): the
+/// runs between them are unchanged and keep their own styles instead of taking the heading's.
+#[test]
+fn unchanged_runs_between_two_edits_keep_their_styles() {
+    let original = mixed_region_page();
+    let look =
+        |doc: &Document| text::text_lines(doc, 0).unwrap().into_iter().map(|l| (l.text.trim().to_string(), l.base_font, l.color)).collect::<Vec<_>>();
+    let before = look(&original);
+    let block = text::text_blocks(&original, 0).unwrap()[1].clone();
+    let mut doc = original.clone();
+    let draft = block.editor_text.replace("About", "About us").replace("footer", "footnote");
+    text::replace_block(&mut doc, 0, 1, &draft).unwrap();
+    let after = look(&reopen(&doc));
+    let style = |lines: &[(String, String, [f64; 3])], word: &str| lines.iter().find(|l| l.0 == word).map(|l| (l.1.clone(), l.2));
+    for word in ["Plain", "bold", "text."] {
+        assert_eq!(style(&after, word), style(&before, word), "{word:?} keeps its own style; lines after the edit: {after:?}");
+    }
+    assert_eq!(style(&after, "About us"), style(&before, "About"));
+    assert_eq!(style(&after, "Italic footnote"), style(&before, "Italic footer"));
+}
+
+#[test]
+fn disjoint_style_ranges_preserve_unselected_runs_and_validate_utf8_atomically() {
+    let mut doc = mixed_region_page();
+    let block = text::text_blocks(&doc, 0).unwrap()[1].clone();
+    let a = block.editor_text.find("Plain").unwrap();
+    let b = block.editor_text.find("bold").unwrap();
+    let style = BlockStyle {
+        ranges: vec![
+            RangeStyle {
+                range: a..a + 5,
+                family: None,
+                resource: None,
+                size: Some(15.0),
+                color: Some([0.8, 0.1, 0.2]),
+                underline: Some(true),
+                char_spacing: None,
+                scale: None,
+            },
+            RangeStyle {
+                range: b..b + 4,
+                family: Some((Family::Courier, false, true)),
+                resource: None,
+                size: None,
+                color: None,
+                underline: None,
+                char_spacing: Some(0.2),
+                scale: Some(90.0),
+            },
+        ],
+        width: Some(300.0),
+        ..Default::default()
+    };
+    text::rewrite_block(&mut doc, 0, 1, Some(&block.editor_text), &style).unwrap();
+    doc = reopen(&doc);
+    let lines = text::text_lines(&doc, 0).unwrap();
+    let plain = lines.iter().find(|l| l.text == "Plain").unwrap();
+    assert_eq!((plain.size, plain.color), (15.0, [0.8, 0.1, 0.2]));
+    let bold = lines.iter().find(|l| l.text == "bold").unwrap();
+    assert_eq!(bold.base_font, "Courier-Oblique");
+    let original = mixed_region_page();
+    for word in ["About", "Italic footer"] {
+        let prior = text::text_lines(&original, 0).unwrap().into_iter().find(|l| l.text == word).unwrap();
+        let after = lines.iter().find(|l| l.text == word).unwrap();
+        assert_eq!((after.size, after.color, &after.font, after.baseline()), (prior.size, prior.color, &prior.font, prior.baseline()));
+    }
+    let before = pdfcraft_cos::write_full(&doc, &SaveOptions::default()).unwrap();
+    let invalid = BlockStyle {
+        ranges: vec![RangeStyle {
+            range: 1..2,
+            family: None,
+            resource: None,
+            size: Some(12.0),
+            color: None,
+            underline: None,
+            char_spacing: None,
+            scale: None,
+        }],
+        ..Default::default()
+    };
+    assert!(text::rewrite_block(&mut doc, 0, 1, Some("é bad"), &invalid).is_err());
+    assert_eq!(pdfcraft_cos::write_full(&doc, &SaveOptions::default()).unwrap(), before);
+}
+
+#[test]
+fn centered_mixed_size_title_keeps_three_rows_when_changed() {
+    let mut doc = mixed_region_page();
+    let title = text::text_blocks(&doc, 0).unwrap()[0].clone();
+    text::replace_block(&mut doc, 0, 0, &title.editor_text.replace("last", "tail")).unwrap();
+    let reopened = reopen(&doc);
+    let blocks = text::text_blocks(&reopened, 0).unwrap();
+    assert_eq!(blocks[0].editor_text, "TITLE\ntwo lines\ntail");
+    assert_eq!(blocks[0].rows.len(), 3);
+    let lines = text::text_lines(&reopened, 0).unwrap();
+    for row in &blocks[0].rows {
+        let line = &lines[row[0]];
+        assert!(((line.rect[0] + line.rect[2]) / 2.0 - 150.0).abs() < 0.01);
+    }
+}
+
+#[test]
+fn image_selection_bounds_respect_clips_and_restore_graphics_state() {
+    let mut doc = image_page();
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let content = b"q 1 0 0 1 10 20 cm 20 30 100 80 re W* n q 1200 0 0 1400 -500 -600 cm /Im0 Do Q Q q 200 0 0 100 100 100 cm /Im0 Do Q q 0 0 10 10 re W n 100 0 0 100 200 200 cm /Im0 Do Q";
+    let stream = doc.add(Object::Stream(Stream::flate(Dict::new(), content)));
+    doc.update_dict(page.obj, |d| d.set(b"Contents".to_vec(), Object::Ref(stream))).unwrap();
+    let before = images::page_images(&doc, 0).unwrap();
+    assert_eq!(before.len(), 3, "fully clipped placements retain source indexes");
+    assert_eq!(before[0].visible_rect, Some([30.0, 50.0, 130.0, 130.0]));
+    assert_eq!(before[1].visible_rect, Some(before[1].rect), "Q restores the prior clip");
+    assert_eq!(before[2].visible_rect, None);
+    let objects = crate::editable_objects(&doc, 0).unwrap();
+    assert_eq!(objects.len(), 2, "hidden images cannot intercept selection");
+    assert_eq!(objects[0].rect, before[0].visible_rect.unwrap());
+    let offset = [12.0, 14.0];
+    images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(pdfcraft_content::Matrix::translate(offset[0], offset[1]).0)).unwrap();
+    let reopened = reopen(&doc);
+    let after = images::page_images(&reopened, 0).unwrap();
+    assert_eq!(after[0].visible_rect, Some([42.0, 64.0, 142.0, 144.0]), "an exclusive crop moves with the image even across nested graphics states");
+    for (a, b) in after[0].rect.iter().zip(before[0].rect.iter()).enumerate() {
+        assert!((b.0 - b.1 - offset[a % 2]).abs() < 0.001);
+    }
+    assert_eq!(after[1].rect, before[1].rect, "neighbor placement unchanged");
+    assert_eq!(after[1].visible_rect, before[1].visible_rect);
+    assert_eq!(after[1].matrix, before[1].matrix);
+    assert_eq!(after[1].object, before[1].object);
+}
+
+#[test]
+fn image_clip_path_and_graphics_state_continue_across_content_streams() {
+    let mut doc = image_page();
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let pieces: [&[u8]; 3] = [b"q 20 30 40 50 re W", b"n 1000 0 0 1000 -300 -400 cm /Im0 Do", b"Q q 50 0 0 50 100 200 cm /Im0 Do Q"];
+    let refs: Vec<_> = pieces.into_iter().map(|b| Object::Ref(doc.add(Object::Stream(Stream::flate(Dict::new(), b))))).collect();
+    doc.update_dict(page.obj, |d| d.set(b"Contents".to_vec(), Object::Array(refs))).unwrap();
+    let images = images::page_images(&doc, 0).unwrap();
+    assert_eq!(images[0].visible_rect, Some([20.0, 30.0, 60.0, 80.0]));
+    assert_eq!(images[1].visible_rect, Some([100.0, 200.0, 150.0, 250.0]));
+    images::change_image(
+        &mut doc,
+        0,
+        0,
+        &images::ImageChange::Transform(images::rect_to_rect(images[0].visible_rect.unwrap(), [20.0, 30.0, 80.0, 105.0])),
+    )
+    .unwrap();
+    let after = images::page_images(&reopen(&doc), 0).unwrap();
+    assert!(close(after[0].visible_rect.unwrap(), [20.0, 30.0, 80.0, 105.0]), "an exclusive crop scales with its image across streams");
+    assert_eq!(after[1].matrix, images[1].matrix, "graphics state restored across stream boundaries");
+}
+
+#[test]
+fn cropped_image_resizing_moves_private_clips_and_keeps_shared_ones() {
+    let mut doc = image_page();
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let stream = doc.add(Object::Stream(Stream::flate(
+        Dict::new(),
+        b"q 30 170 130 80 re W* n 800 0 0 900 -300 -400 cm /Im0 Do Q BT /F1 12 Tf 30 130 Td (Caption) Tj ET",
+    )));
+    doc.update_dict(page.obj, |d| d.set(b"Contents".to_vec(), Object::Ref(stream))).unwrap();
+    for target in [[30.0, 170.0, 190.0, 270.0], [30.0, 170.0, 110.0, 220.0], [70.0, 210.0, 150.0, 260.0]] {
+        let before = images::page_images(&doc, 0).unwrap()[0].clone();
+        let transform = images::rect_to_rect(before.visible_rect.unwrap(), target);
+        images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(transform)).unwrap();
+        doc = reopen(&doc);
+        let after = images::page_images(&doc, 0).unwrap()[0].clone();
+        // The moved clip's `cm` is written with the content stream's number precision.
+        let near = |a: [f64; 4], b: [f64; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.05);
+        assert!(near(after.visible_rect.unwrap(), target), "{:?} vs {target:?}", after.visible_rect);
+        assert!(near(after.rect, pdfcraft_content::Matrix(transform).bbox(before.rect)), "full pixels use the same crop transform");
+        assert_eq!(after.object, before.object, "pixels are never resampled or replaced");
+        assert_eq!(text::text_lines(&doc, 0).unwrap()[0].baseline(), [30.0, 130.0]);
+    }
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let stream = doc.add(Object::Stream(Stream::flate(
+        Dict::new(),
+        b"q 30 170 130 80 re W n q 800 0 0 900 -300 -400 cm /Im0 Do Q BT /F1 12 Tf 40 200 Td (Shared caption) Tj ET Q",
+    )));
+    doc.update_dict(page.obj, |d| d.set(b"Contents".to_vec(), Object::Ref(stream))).unwrap();
+    let before = images::page_images(&doc, 0).unwrap();
+    let caption = text::text_lines(&doc, 0).unwrap();
+    let transform = [1.2, 0.0, 0.0, 1.2, 0.0, 0.0];
+    images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(transform)).unwrap();
+    doc = reopen(&doc);
+    let after = images::page_images(&doc, 0).unwrap();
+    assert!(close(after[0].visible_rect.unwrap(), before[0].visible_rect.unwrap()), "a shared clip stays where it is");
+    assert_eq!(after[0].object, before[0].object);
+    assert_eq!(
+        text::text_lines(&doc, 0).unwrap().iter().map(|l| (&l.text, l.rect, l.baseline())).collect::<Vec<_>>(),
+        caption.iter().map(|l| (&l.text, l.rect, l.baseline())).collect::<Vec<_>>()
+    );
+    images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform([0.5, 0.0, 0.0, 0.5, 0.0, 0.0])).unwrap();
+    assert_eq!(text::text_lines(&doc, 0).unwrap().len(), 1);
+}
+
+#[test]
+fn private_image_crop_with_intervening_state_resizes_across_streams() {
+    let variants: Vec<Vec<&[u8]>> = vec![
+        vec![b"q 1 0 0 1 10 20 cm 20 150 130 80 re W* n 0.5 g q 800 0 0 900 -300 -400 cm /Im0 Do Q Q BT /F1 12 Tf 30 130 Td (Caption) Tj ET"],
+        vec![b"q 1 0 0 1 10 20 cm 20 150 130 80 re W*", b"n 0.5 g q 800 0 0 900 -300 -400 cm /Im0 Do", b"Q Q BT /F1 12 Tf 30 130 Td (Caption) Tj ET"],
+    ];
+    for pieces in variants {
+        let mut doc = image_page();
+        let page = pdfcraft_model::pages(&doc)[0].obj;
+        let refs = pieces.iter().map(|b| Object::Ref(doc.add(Object::Stream(Stream::flate(Dict::new(), b))))).collect();
+        doc.update_dict(page, |d| d.set(b"Contents".to_vec(), Object::Array(refs))).unwrap();
+        let caption = text::text_lines(&doc, 0).unwrap();
+        for target in [[30.0, 170.0, 190.0, 270.0], [30.0, 170.0, 110.0, 220.0], [70.0, 210.0, 150.0, 260.0]] {
+            let before = images::page_images(&doc, 0).unwrap()[0].clone();
+            let transform = images::rect_to_rect(before.visible_rect.unwrap(), target);
+            images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(transform)).unwrap();
+            doc = reopen(&doc);
+            let after = images::page_images(&doc, 0).unwrap()[0].clone();
+            assert!(close(after.visible_rect.unwrap(), target), "the private crop follows the image without a literal operator pattern");
+            assert!(close(after.rect, pdfcraft_content::Matrix(transform).bbox(before.rect)));
+            assert_eq!(after.object, before.object);
+            assert_eq!(
+                text::text_lines(&doc, 0).unwrap().iter().map(|l| (&l.text, l.rect, l.baseline())).collect::<Vec<_>>(),
+                caption.iter().map(|l| (&l.text, l.rect, l.baseline())).collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+#[test]
+fn curved_image_clips_have_analytic_bounds_and_holes_do_not_capture_points() {
+    let mut doc = image_page();
+    let page = pdfcraft_model::pages(&doc)[0].obj;
+    let bytes =
+        b"q 0 0 m 0 200 100 200 100 0 c h W n 300 0 0 300 0 0 cm /Im0 Do Q q 100 100 100 100 re 125 125 50 50 re W* n 400 0 0 400 0 0 cm /Im0 Do Q";
+    let content = doc.add(Object::Stream(Stream::flate(Dict::new(), bytes)));
+    doc.update_dict(page, |d| d.set(b"Contents".to_vec(), Object::Ref(content))).unwrap();
+    let images = images::page_images(&doc, 0).unwrap();
+    assert!(close(images[0].visible_rect.unwrap(), [0.0, 0.0, 100.0, 150.0]), "cubic extrema, not controls");
+    assert!(images[0].contains([50.0, 100.0]));
+    assert!(!images[0].contains([2.0, 140.0]), "empty corners of curve bounds are not artwork");
+    assert!(images[1].contains([110.0, 110.0]));
+    assert!(!images[1].contains([150.0, 150.0]), "even-odd hole");
+    images::change_image(&mut doc, 0, 1, &images::ImageChange::Transform([1.2, 0.0, 0.0, 1.2, 10.0, 15.0])).unwrap();
+    let after = images::page_images(&reopen(&doc), 0).unwrap();
+    assert!(!after[1].contains([190.0, 195.0]), "the transformed even-odd hole remains empty");
+    assert!(after[1].contains([142.0, 147.0]), "the transformed filled corner remains selectable");
+    assert_eq!(after[0].visible_rect, images[0].visible_rect, "the neighbouring curved clip stays put");
+}
+
+#[test]
+fn marked_paragraph_boundaries_and_cross_stream_transforms_survive_rewrite() {
+    let mut doc =
+        text_page("/P << /MCID 0 >> BDC BT /F1 12 Tf 40 500 Td (One) Tj ET EMC /P << /MCID 1 >> BDC BT /F1 12 Tf 40 482 Td (Two) Tj ET EMC");
+    assert_eq!(text::text_blocks(&doc, 0).unwrap().len(), 2, "distinct explicit paragraphs win over nearby geometry");
+    let page = pdfcraft_model::pages(&doc)[0].obj;
+    let parts: [&[u8]; 2] =
+        [b"/P << /MCID 2 >> BDC BT /F1 12 Tf 40 500 Td (First row) Tj ET", b"q 1 0 0 1 10 12 cm BT /F1 12 Tf 30 470 Td (Second row) Tj ET Q EMC"];
+    let refs = parts.iter().map(|p| Object::Ref(doc.add(Object::Stream(Stream::flate(Dict::new(), p))))).collect();
+    doc.update_dict(page, |d| d.set(b"Contents".to_vec(), Object::Array(refs))).unwrap();
+    let block = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(block.len(), 1, "one marked paragraph across streams and coordinate spaces");
+    assert_eq!(block[0].editor_text, "First row\nSecond row");
+    let original = text::text_lines(&doc, 0).unwrap();
+    text::rewrite_block(&mut doc, 0, 0, Some("First row\nChanged row"), &text::BlockStyle { width: Some(200.0), ..Default::default() }).unwrap();
+    let after = text::text_lines(&reopen(&doc), 0).unwrap();
+    for (a, b) in after.iter().zip(original) {
+        assert!(close(a.rect, b.rect) || a.baseline() == b.baseline());
+    }
+    assert_eq!(after[1].text, "Changed row");
+}
+
+#[test]
+fn logical_indic_with_nuktas_not_reordered_on_standard_font() {
+    // Already logical Hindi text with nuktas (बढ़िया) must not be corrupted by pre-base reordering
+    // when the font does not require visual order.
+    let hex_actual = "<FEFF092C0922093C093F092F093E>";
+    let doc = text_page(&format!("/Span << /ActualText {hex_actual} >> BDC BT /F1 12 Tf 40 500 Td (ab) Tj ET EMC"));
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].text, "\u{092C}\u{0922}\u{093C}\u{093F}\u{092F}\u{093E}");
+    assert!(!lines[0].visual_order);
+}
+
+/// One page in a font named `base_font` whose ToUnicode maps A ब, B ि, C ढ़, D य, E ा, F क, G त.
+/// A legacy visual-order font draws "बढ़िया" as `(ABCDE)` (ब ि ढ़ या) and "किताब" as `(BFGEA)`.
+fn devanagari_page(base_font: &str, content: &str) -> Document {
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapType 2 def \
+                1 begincodespacerange <00> <FF> endcodespacerange 8 beginbfchar \
+                <20> <0020> <41> <092C> <42> <093F> <43> <0922093C> <44> <092F> <45> <093E> <46> <0915> <47> <0924> \
+                endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
+    let widths: Vec<&str> = (32..=71)
+        .map(|c| {
+            if c == 32 {
+                "250"
+            } else if c >= 65 {
+                "500"
+            } else {
+                "0"
+            }
+        })
+        .collect();
+    let font = format!(
+        "<< /Type /Font /Subtype /Type1 /BaseFont /{base_font} /FirstChar 32 /LastChar 71 /Widths [{}] /ToUnicode 6 0 R >>",
+        widths.join(" ")
+    );
+    build(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        &stream("", content),
+        &font,
+        &stream("", cmap),
+    ])
+}
+
+/// A legacy visual-order font (Kruti Dev) whose ToUnicode gives the glyphs in drawing order: the
+/// pre-base vowel sign is read back after its consonant, for editing and for reading.
+#[test]
+fn legacy_indic_font_flags_visual_order_and_reorders_pre_base_vowels() {
+    let doc = devanagari_page("KrutiDev010", "BT /F1 12 Tf 40 500 Td (ABCDE) Tj ET");
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].visual_order);
+    assert_eq!(lines[0].text, "\u{092C}\u{0922}\u{093C}\u{093F}\u{092F}\u{093E}");
+    let reading: Vec<String> = text::reading_blocks(&doc, 0).unwrap().into_iter().map(|b| b.text).collect();
+    assert_eq!(reading, ["\u{092C}\u{0922}\u{093C}\u{093F}\u{092F}\u{093E}"]);
+}
+
+/// Typed (logical) text is written back in the font's visual order and reads back as typed.
+#[test]
+fn legacy_indic_font_edits_are_written_in_visual_order() {
+    let mut doc = devanagari_page("ABCDEF+KrutiDev010", "BT /F1 12 Tf 40 500 Td (ABCDE) Tj ET");
+    let kitab = "\u{0915}\u{093F}\u{0924}\u{093E}\u{092C}";
+    assert_eq!(text::replace_line(&mut doc, 0, 0, kitab).unwrap().substituted, None);
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(content.contains("(BFGEA)"), "{content}");
+    assert_eq!(text::text_lines(&reopen(&doc), 0).unwrap()[0].text, kitab);
+}
+
+/// `/ActualText` is already in logical order, even in a visual-order font: "बढ़िया" must not
+/// become "बढ़यिा".
+#[test]
+fn logical_actual_text_in_a_legacy_indic_font_is_not_reordered() {
+    let doc = devanagari_page("KrutiDev010", "/Span << /ActualText <FEFF092C0922093C093F092F093E> >> BDC BT /F1 12 Tf 40 500 Td (ABCDE) Tj ET EMC");
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].text, "\u{092C}\u{0922}\u{093C}\u{093F}\u{092F}\u{093E}");
+    let reading: Vec<String> = text::reading_blocks(&doc, 0).unwrap().into_iter().map(|b| b.text).collect();
+    assert_eq!(reading, ["\u{092C}\u{0922}\u{093C}\u{093F}\u{092F}\u{093E}"]);
+}
+
+/// A modern subset font with a logical ToUnicode and no GSUB in the PDF (subsets and bare CFF
+/// often drop it) is not visual order: its text is read as it is.
+#[test]
+fn subset_indic_font_without_legacy_name_keeps_logical_text() {
+    let doc = devanagari_page("ABCDEF+NotoSansDevanagari-Regular", "BT /F1 12 Tf 40 500 Td (ACBDE) Tj ET");
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert_eq!(lines.len(), 1);
+    assert!(!lines[0].visual_order);
+    assert_eq!(lines[0].text, "\u{092C}\u{0922}\u{093C}\u{093F}\u{092F}\u{093E}");
+}
+
+/// Lines of a paragraph drawn turned on the page (a landscape page drawn a quarter turn round)
+/// are separate rows, and adding a word keeps them apart (#1443).
+#[test]
+fn turned_paragraph_keeps_its_line_breaks_when_a_word_is_added() {
+    for cm in ["0 1 -1 0 600 0", "0 -1 1 0 0 800", "-1 0 0 -1 600 800"] {
+        let original =
+            text_page(&format!("q {cm} cm BT /F1 12 Tf 72 500 Td (First line here) Tj 0 -14 Td (Second line) Tj 0 -14 Td (Third) Tj ET Q"));
+        let block = text::text_blocks(&original, 0).unwrap().remove(0);
+        assert_eq!(block.editor_text, "First line here\nSecond line\nThird", "{cm}");
+        let mut doc = original.clone();
+        text::rewrite_block(&mut doc, 0, 0, Some("First line here\nSecond line\nThird added"), &text::BlockStyle::default()).unwrap();
+        let reopened = reopen(&doc);
+        assert_eq!(text::text_blocks(&reopened, 0).unwrap()[0].editor_text, "First line here\nSecond line\nThird added", "{cm}");
+        let (before, after) = (text::text_lines(&original, 0).unwrap(), text::text_lines(&reopened, 0).unwrap());
+        assert_eq!(after.len(), 3, "{cm}");
+        for (a, b) in after.iter().zip(&before).take(2) {
+            assert!(close(a.rect, b.rect), "{cm}: untouched rows stay put: {:?} {:?}", a.rect, b.rect);
+        }
+        // The last row grows along its own baseline from where it started.
+        let (grown, old) = (after[2].rect, before[2].rect);
+        assert!((0..2).all(|i| grown[i] <= old[i] + 0.01) && (2..4).all(|i| grown[i] >= old[i] - 0.01), "{cm}: {grown:?} {old:?}");
+        assert!((after[2].origin_baseline() - before[2].origin_baseline()).abs() < 0.01, "{cm}");
+    }
+    // A turned single line grows rather than wrapping across the page's other axis.
+    let mut doc = text_page("BT /F1 12 Tf 0 1 -1 0 300 300 Tm (Only line) Tj ET");
+    text::rewrite_block(&mut doc, 0, 0, Some("Only line with several more words added"), &text::BlockStyle::default()).unwrap();
+    let blocks = text::text_blocks(&reopen(&doc), 0).unwrap();
+    assert_eq!(blocks[0].editor_text, "Only line with several more words added");
+    // Formatting part of turned text isn't laid out yet: refused, not drawn along the page's x axis.
+    let mut doc = text_page("BT /F1 12 Tf 0 1 -1 0 300 300 Tm (Only line) Tj ET");
+    let range = text::RangeStyle {
+        range: 0..4,
+        family: None,
+        resource: None,
+        size: Some(20.0),
+        color: None,
+        underline: None,
+        char_spacing: None,
+        scale: None,
+    };
+    let style = text::BlockStyle { ranges: vec![range], ..Default::default() };
+    assert!(text::rewrite_block(&mut doc, 0, 0, Some("Only line"), &style).is_err());
+}
+
+/// A paragraph in a Chrome-style subset font: `/W` leaves out the glyphs of the `/DW` width.
+/// Adding a word keeps every row as it was and shows the word in the page's own font (#1443).
+#[test]
+fn default_width_subset_paragraph_keeps_its_rows_when_a_word_is_added() {
+    let hex = |s: &str| s.chars().map(|c| format!("00{:02X}", u32::from(c))).collect::<String>();
+    let rows = ["This is the first line", "the second", "and third"];
+    let content = rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| format!("BT /F3 12 Tf 1 0 0 1 72 {} Tm <{}> Tj ET", 700 - 14 * i, hex(row)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut doc = text_page(&content);
+    let cmap = b"/CIDInit /ProcSet findresource begin 1 begincodespacerange <0000> <FFFF> endcodespacerange \
+        1 beginbfrange <0020> <007E> <0020> endbfrange end";
+    let to_unicode = doc.add(Object::Stream(Stream::from_raw(Dict::new(), cmap.to_vec())));
+    let mut cid = Dict::new();
+    cid.set(b"Type".to_vec(), Object::name("Font"));
+    cid.set(b"Subtype".to_vec(), Object::name("CIDFontType2"));
+    cid.set(b"BaseFont".to_vec(), Object::name("AAAAAA+LiberationSans"));
+    cid.set(b"CIDToGIDMap".to_vec(), Object::name("Identity"));
+    cid.set(b"DW".to_vec(), Object::Int(500));
+    cid.set(
+        b"W".to_vec(),
+        Object::Array(vec![Object::Int(32), Object::Array(vec![Object::Int(278)]), Object::Int(84), Object::Array(vec![Object::Int(611)])]),
+    );
+    let mut font = Dict::new();
+    font.set(b"Type".to_vec(), Object::name("Font"));
+    font.set(b"Subtype".to_vec(), Object::name("Type0"));
+    font.set(b"BaseFont".to_vec(), Object::name("AAAAAA+LiberationSans"));
+    font.set(b"Encoding".to_vec(), Object::name("Identity-H"));
+    font.set(b"DescendantFonts".to_vec(), Object::Array(vec![Object::Dict(cid)]));
+    font.set(b"ToUnicode".to_vec(), Object::Ref(to_unicode));
+    let font = doc.add(Object::Dict(font));
+    let page = pdfcraft_model::pages(&doc)[0].clone();
+    let mut resources = doc.resolve(page.dict.get(b"Resources").unwrap()).as_dict().unwrap().clone();
+    let mut fonts = doc.resolve(resources.get(b"Font").unwrap()).as_dict().unwrap().clone();
+    fonts.set(b"F3".to_vec(), Object::Ref(font));
+    resources.set(b"Font".to_vec(), Object::Dict(fonts));
+    doc.update_dict(page.obj, |d| d.set(b"Resources".to_vec(), Object::Dict(resources))).unwrap();
+    let block = text::text_blocks(&doc, 0).unwrap().remove(0);
+    assert_eq!(block.editor_text, rows.join("\n"));
+    let before = text::text_lines(&doc, 0).unwrap();
+    let edit = text::rewrite_block(&mut doc, 0, 0, Some(&format!("{} added", block.editor_text)), &text::BlockStyle::default()).unwrap();
+    assert_eq!(edit.substituted, None, "the subset shows every letter of the new word");
+    let reopened = reopen(&doc);
+    assert_eq!(text::text_blocks(&reopened, 0).unwrap()[0].editor_text, "This is the first line\nthe second\nand third added");
+    let after = text::text_lines(&reopened, 0).unwrap();
+    for (a, b) in after.iter().zip(&before).take(2) {
+        assert_eq!(a.text, b.text);
+        assert!(close(a.rect, b.rect), "untouched rows keep their place and width: {:?} {:?}", a.rect, b.rect);
+    }
+}
+
+/// An added item is written out as a specific standard-14 face (`/Times-Italic`, `/Helvetica-Bold`
+/// …), so it has to be *measured* with that same face. Measuring the upright face while writing
+/// the italic one mis-sizes every box: Times-Italic `A` is 611 against Times-Roman's 722.
+#[test]
+fn an_items_measured_face_is_the_face_it_is_written_as() {
+    for family in [Family::Helvetica, Family::Times, Family::Courier] {
+        for bold in [false, true] {
+            for italic in [false, true] {
+                let written = family.base_font(bold, italic);
+                let measured = family.std14(bold, italic);
+                assert_eq!(written, measured.base_font(), "{family:?} bold={bold} italic={italic}");
+                // ... and the public measure reaches that face, rather than an upright stand-in.
+                assert_eq!(family.width("Anna", 12.0, bold, italic), measured.text_width("Anna", 12.0), "{family:?} bold={bold} italic={italic}");
+            }
+        }
+    }
+    // The faces really do differ, so the assertions above are not all comparing the same number.
+    let times = |italic| Family::Times.width("Anna", 12.0, false, italic);
+    assert_ne!(times(false), times(true), "Times-Italic is not Times-Roman");
+    // Courier is monospaced in every style: equal widths here are correct, not a collapsed face.
+    let courier = |italic| Family::Courier.width("Anna", 12.0, false, italic);
+    assert_eq!(courier(false), courier(true));
+}
+
+#[test]
+fn page_marks_and_added_content_preserve_fractional_user_unit_matrices() {
+    for rotation in [0, 90] {
+        let mut doc = fixture();
+        let page = pdfcraft_model::pages(&doc)[2].obj;
+        doc.update_dict(page, |d| {
+            let bounds = Object::Array([0.0, 0.0, 0.1, 0.1].into_iter().map(Object::Real).collect());
+            d.set(b"MediaBox".to_vec(), bounds.clone());
+            d.set(b"CropBox".to_vec(), bounds);
+            d.set(b"UserUnit".to_vec(), Object::Int(4096));
+            d.set(b"Rotate".to_vec(), Object::Int(rotation));
+        })
+        .unwrap();
+        let mut hf = HeaderFooter::default();
+        hf.text[0] = "Matrix header".into();
+        add_header_footer(&mut doc, &[2], &hf, false, &cx()).unwrap();
+        let text = AddedText { rect: [72.0, 100.0, 200.0, 144.0], text: "Matrix text".into(), size: 12.0, ..AddedText::default() };
+        add_content(&mut doc, 2, &Content::Text(text)).unwrap();
+        let saved = reopen(&doc);
+        let contents = streams(&saved, 2);
+        for marker in ["/PCMark /HeaderFooter", "(Matrix text) Tj"] {
+            let matching: Vec<_> = contents.iter().filter(|s| s.contains(marker)).collect();
+            assert_eq!(matching.len(), 1, "{contents:?}");
+            let stream = matching[0];
+            let parsed = pdfcraft_content::parse(stream.as_bytes());
+            assert_eq!(parsed.skipped, 0);
+            let cm = parsed.ops.iter().find(|op| op.is("cm")).unwrap();
+            assert_eq!(cm.operands.len(), 6);
+            assert!(!stream[cm.span.clone()].contains('e') && !stream[cm.span.clone()].contains('E'), "PDF numbers cannot use exponents");
+            let matrix = cm.nums::<6>().unwrap();
+            let expected = if rotation == 0 {
+                [0.000244140625, 0.0, 0.0, 0.000244140625, 0.0, 0.0]
+            } else {
+                [0.0, 0.000244140625, -0.000244140625, 0.0, 0.1, 0.0]
+            };
+            assert_eq!(matrix, expected, "rotation={rotation}, stream={stream}");
+            // A fixed physical display point must remain at its intended raw page position.
+            let raw = [matrix[0] * 72.0 + matrix[2] * 144.0 + matrix[4], matrix[1] * 72.0 + matrix[3] * 144.0 + matrix[5]];
+            let expected_raw = if rotation == 0 { [0.017578125, 0.03515625] } else { [0.06484375, 0.017578125] };
+            for (actual, expected) in raw.into_iter().zip(expected_raw) {
+                assert!((actual - expected).abs() < 1e-12);
+            }
+        }
+    }
+}
+
+#[test]
+fn rows_the_edit_does_not_reach_keep_their_source_operators() {
+    // Word gaps in TJ, as justified text from a layout program has; the text state alone
+    // can't reproduce them, so a rewritten row would lose them.
+    let rows = [
+        "[(justified) -400 ( text) -400 ( uses) -400 ( wide) -400 ( gaps)] TJ",
+        "[(between) -400 ( every) -400 ( single) -400 ( word) -400 ( here)] TJ",
+        "(last line.) Tj",
+    ];
+    let content = format!("BT /F1 12 Tf 14.4 TL 1 0 0 1 72 700 Tm {} T* {} T* {} ET", rows[0], rows[1], rows[2]);
+    let row_texts = |doc: &Document| -> Vec<(String, [f64; 2])> {
+        text::text_lines(doc, 0).unwrap().into_iter().map(|l| (l.text.clone(), l.baseline())).collect()
+    };
+    let source = row_texts(&text_page(&content));
+    assert_eq!(source.len(), 3);
+    for (row, from, to) in [(2, "last line.", "last line!"), (0, "justified", "justify"), (1, "single", "lone")] {
+        let mut doc = text_page(&content);
+        let block = text::text_blocks(&doc, 0).unwrap().into_iter().position(|b| b.text.contains("justified")).unwrap();
+        let draft = text::text_blocks(&doc, 0).unwrap()[block].editor_text.replacen(from, to, 1);
+        text::rewrite_block(&mut doc, 0, block, Some(&draft), &text::BlockStyle::default()).unwrap();
+        let doc = reopen(&doc);
+        let bytes = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+        let after = row_texts(&doc);
+        assert_eq!(after.len(), 3, "{to}: {after:?}");
+        for (i, ((text, at), (old, was))) in after.iter().zip(&source).enumerate() {
+            assert!((at[0] - was[0]).abs() < 0.01 && (at[1] - was[1]).abs() < 0.01, "{to}: row {i} stays at {was:?}, not {at:?}");
+            if i == row {
+                assert_eq!(*text, old.replacen(from, to, 1), "{to}: the edited row");
+                assert!(!bytes.contains(rows[i]), "{to}: the edited row is rewritten");
+            } else {
+                assert_eq!(text, old, "{to}: row {i}");
+                assert_eq!(bytes.matches(rows[i]).count(), 1, "{to}: row {i} keeps its own operator, kerning included:\n{bytes}");
+            }
+        }
+    }
+    // Colouring a selection in the last row leaves the rows above it as they were.
+    let mut doc = text_page(&content);
+    let block = text::text_blocks(&doc, 0).unwrap().into_iter().position(|b| b.text.contains("justified")).unwrap();
+    let draft = text::text_blocks(&doc, 0).unwrap()[block].editor_text.clone();
+    let at = draft.find("line").unwrap();
+    let range = text::RangeStyle {
+        range: at..at + 4,
+        family: None,
+        resource: None,
+        size: None,
+        color: Some([1.0, 0.0, 0.0]),
+        underline: None,
+        char_spacing: None,
+        scale: None,
+    };
+    text::rewrite_block(&mut doc, 0, block, Some(&draft), &text::BlockStyle { ranges: vec![range], ..Default::default() }).unwrap();
+    let bytes = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(rows[..2].iter().all(|row| bytes.matches(row).count() == 1) && !bytes.contains(rows[2]), "{bytes}");
+    assert!(bytes.contains("1 0 0 rg"), "{bytes}");
+    // The coloured word is its own run now, so only the rows above compare whole.
+    assert_eq!(row_texts(&reopen(&doc))[..2], source[..2]);
+}
+
+#[test]
+fn kept_rows_stay_in_place_when_rows_wrap_or_move_with_quote_operators() {
+    let lines_of = |doc: &Document| -> Vec<(String, [f64; 2])> {
+        text::text_lines(doc, 0).unwrap().into_iter().map(|l| (l.text.clone(), l.baseline())).collect()
+    };
+    let edit = |content: &str, from: &str, to: &str| {
+        let mut doc = text_page(content);
+        let block = text::text_blocks(&doc, 0).unwrap().into_iter().position(|b| b.editor_text.contains(from)).unwrap();
+        let draft = text::text_blocks(&doc, 0).unwrap()[block].editor_text.replacen(from, to, 1);
+        text::rewrite_block(&mut doc, 0, block, Some(&draft), &text::BlockStyle::default()).unwrap();
+        reopen(&doc)
+    };
+    // `'` moves to the next line as it shows: a row after a rewritten `'` row can't stay as it is.
+    for (quoted, from, to) in [
+        ("BT /F1 12 Tf 14 TL 72 700 Td (first row here) Tj (second row here) ' (third row here) ' ET", "second", "2nd"),
+        ("BT /F1 12 Tf 14 TL 72 700 Td (first row here) Tj (second row here) ' (third row here) ' ET", "third", "3rd"),
+        // Here the first row's own `'` makes the step down that the rows after it build on.
+        ("BT /F1 12 Tf 14 TL 72 714 Td (first row here) ' (second row here) ' (third row here) ' ET", "first", "1st"),
+    ] {
+        let source = lines_of(&text_page(quoted));
+        let after = lines_of(&edit(quoted, from, to));
+        assert_eq!(after.len(), 3, "{to}: {after:?}");
+        for ((text, at), (old, was)) in after.iter().zip(&source) {
+            assert_eq!(*text, old.replacen(from, to, 1));
+            assert!((at[0] - was[0]).abs() < 0.01 && (at[1] - was[1]).abs() < 0.01, "{to}: {text} stays at {was:?}, not {at:?}");
+        }
+    }
+    // A row that grows past the paragraph's width wraps and pushes the rows below it down;
+    // those are rewritten in their new places, never left behind as well.
+    let rows = "BT /F1 12 Tf 14.4 TL 72 700 Td (one two three four) Tj T* (five six seven eight) Tj T* (nine ten eleven twelve) Tj ET";
+    let doc = edit(rows, "two", "two and a great many more words");
+    let text: String = lines_of(&doc).into_iter().map(|(t, _)| t + " ").collect();
+    for word in ["one", "five", "nine", "twelve"] {
+        assert_eq!(text.matches(word).count(), 1, "{word} appears once: {text}");
+    }
+    assert!(lines_of(&doc).len() > 3, "the edited row wrapped: {text}");
+}
+
+/// A page whose `/F1` is Inter embedded as a simple WinAnsi TrueType font, under `base_font`.
+fn embedded_program_page(content: &str, base_font: &str) -> Document {
+    let mut doc = text_page(content);
+    let program = doc.add(Object::Stream(Stream::flate(Dict::new(), include_bytes!("../../../assets/fonts/Inter-Regular.ttf"))));
+    let mut descriptor = Dict::new();
+    descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
+    descriptor.set(b"FontName".to_vec(), Object::name(base_font));
+    descriptor.set(b"FontFile2".to_vec(), Object::Ref(program));
+    let mut font = Dict::new();
+    font.set(b"Type".to_vec(), Object::name("Font"));
+    font.set(b"Subtype".to_vec(), Object::name("TrueType"));
+    font.set(b"BaseFont".to_vec(), Object::name(base_font));
+    font.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
+    font.set(b"FirstChar".to_vec(), Object::Int(32));
+    font.set(b"LastChar".to_vec(), Object::Int(126));
+    font.set(b"Widths".to_vec(), Object::Array((32..=126).map(|_| Object::Int(560)).collect()));
+    font.set(b"FontDescriptor".to_vec(), Object::Dict(descriptor));
+    doc.set(pdfcraft_cos::ObjRef::new(5, 0), Object::Dict(font));
+    reopen(&doc)
+}
+
+/// The font programs and subtypes of the page's font resources.
+fn page_font_programs(doc: &Document) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
+    let page = pdfcraft_model::pages(doc).remove(0);
+    let resources = page.dict.get(b"Resources").and_then(|r| doc.resolve(r).as_dict().cloned()).unwrap_or_default();
+    let fonts = resources.get(b"Font").and_then(|f| doc.resolve(f).as_dict().cloned()).unwrap_or_default();
+    fonts
+        .iter()
+        .filter_map(|(_, f)| doc.resolve(f).as_dict().cloned())
+        .map(|f| (f.name(b"Subtype").unwrap_or_default().to_vec(), pdfcraft_fonts::pdf::embedded_sfnt(doc, &f)))
+        .collect()
+}
+
+#[test]
+fn a_new_character_comes_from_the_source_fonts_own_embedded_program() {
+    let inter = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+    for (content, from, to) in [
+        // One row (the single-style path) and a row of a two-row paragraph (the row editor's path).
+        ("BT /F1 12 Tf 72 700 Td (Stable text) Tj ET", "text", "tőxt"),
+        ("BT /F1 12 Tf 14 TL 72 700 Td (First row) Tj T* (Second row) Tj ET", "Second", "Sőcond"),
+    ] {
+        let mut doc = embedded_program_page(content, "Inter-Regular");
+        let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+        let draft = block.editor_text.replacen(from, to, 1);
+        let edit = text::rewrite_block(&mut doc, 0, 0, Some(&draft), &text::BlockStyle::default()).unwrap();
+        assert_eq!(edit.substituted, None, "{to}: no other family stands in");
+        let doc = reopen(&doc);
+        // The new character is its own run in the other resource, read back into the same word.
+        assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, draft, "{to}");
+        let fonts = page_font_programs(&doc);
+        assert!(fonts.iter().all(|(subtype, _)| subtype != b"Type3"), "{to}: no fallback glyphs");
+        assert!(
+            fonts.iter().any(|(subtype, program)| subtype == b"Type0" && program.as_deref() == Some(inter.as_slice())),
+            "{to}: the source program draws it"
+        );
+    }
+}
+
+#[test]
+fn a_subset_program_is_not_trusted_for_new_characters_and_the_error_names_the_character() {
+    let mut doc = embedded_program_page("BT /F1 12 Tf 72 700 Td (Stable text) Tj ET", "ABCDEF+Inter-Regular");
+    let before = page_content_bytes(&doc, 0);
+    let result = text::rewrite_block(&mut doc, 0, 0, Some("Stable tőxt"), &text::BlockStyle::default());
+    if pdfcraft_fonts::document_japanese_font().is_some() {
+        eprintln!("built with craft-fonts: the fallback font draws the new character");
+        assert!(result.is_ok(), "{result:?}");
+        return;
+    }
+    let Err(EditError::Invalid(msg)) = result else { panic!("expected a clear error, got {result:?}") };
+    assert!(msg.contains("ő (U+0151)") && msg.contains("Load font") && !msg.contains("Japanese"), "{msg}");
+    assert_eq!(page_content_bytes(&doc, 0), before);
+}
+
+#[test]
+fn draft_layout_matches_the_paragraph_an_applied_edit_draws() {
+    let content = "BT /F1 12 Tf 14 TL 72 700 Td (A first paragraph of words) Tj T* (with a second row) Tj ET \
+                   BT /F1 12 Tf 72 600 Td (Another paragraph below) Tj ET BT /F1 12 Tf 320 700 Td (Side note) Tj ET";
+    let doc = text_page(content);
+    let block = text::text_blocks(&doc, 0).unwrap().into_iter().position(|b| b.text.starts_with("A first")).unwrap();
+    let source = text::text_blocks(&doc, 0).unwrap()[block].clone();
+    for draft in [
+        source.editor_text.replacen("words", "many more words than before", 1),
+        source.editor_text.replacen(" of words", "", 1),
+        format!("{}\nand a third row", source.editor_text),
+    ] {
+        let layout = text::text_edit_layout(&doc, 0, block, &draft, &text::BlockStyle::default()).unwrap();
+        // Apply the same edit and measure every run that isn't one of the page's other runs.
+        let mut applied = doc.clone();
+        text::rewrite_block(&mut applied, 0, block, Some(&draft), &text::BlockStyle::default()).unwrap();
+        let others: Vec<_> =
+            text::text_lines(&doc, 0).unwrap().into_iter().enumerate().filter(|(i, _)| !source.lines.contains(i)).map(|(_, l)| l.rect).collect();
+        let drawn = text::text_lines(&applied, 0)
+            .unwrap()
+            .into_iter()
+            .map(|l| l.rect)
+            .filter(|r| !others.contains(r))
+            .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]);
+        assert_eq!(layout.draft_rect, drawn, "{draft:?}");
+        assert_eq!(layout.source_rect, source.rect);
+    }
+}
+
+#[test]
+fn japanese_paragraphs_wrap_between_characters_without_closing_marks_at_a_row_start() {
+    if pdfcraft_fonts::document_japanese_font().is_none() {
+        eprintln!("skipping the Japanese wrapping checks: built without craft-fonts (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let text = "日本語の文章は単語の間に空白がないので、どの文字の間でも行を折り返せます。ただし「句読点」や小さい「っ」は行頭に来ません。";
+    // One paragraph (the single-style path), and a heading row before it (the row editor's path).
+    for draft in [text.to_string(), format!("見出し\n{text}")] {
+        let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Placeholder text) Tj ET");
+        text::rewrite_block(&mut doc, 0, 0, Some(&draft), &text::BlockStyle { width: Some(120.0), ..Default::default() }).unwrap();
+        let block = text::text_blocks(&reopen(&doc), 0).unwrap().remove(0);
+        let rows: Vec<&str> = block.editor_text.split('\n').collect();
+        assert!(rows.len() > 4, "{rows:?}");
+        assert_eq!(rows.concat(), draft.replace('\n', ""), "no space is added between the pieces");
+        assert!(block.rect[2] - block.rect[0] <= 120.5, "{:?} {rows:?}", block.rect);
+        for row in &rows {
+            assert!(!row.starts_with(['、', '。', '」', 'っ']) && !row.ends_with('「'), "{row:?} in {rows:?}");
+        }
     }
 }

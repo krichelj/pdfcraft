@@ -125,12 +125,19 @@ pub fn parse(data: &[u8]) -> Parsed {
                 start.get_or_insert(at);
                 operands.push(Object::Null);
             }
-            b"BI" => {
-                let (dict, img, end) = inline_image(data, lx.pos);
-                lx.pos = end;
-                out.ops.push(Op { op: b"BI".to_vec(), operands: Vec::new(), inline: Some((dict, img)), span: start.take().unwrap_or(at)..end });
-                operands.clear();
-            }
+            b"BI" => match inline_image(data, lx.pos) {
+                Ok((dict, img, end)) => {
+                    lx.pos = end;
+                    out.ops.push(Op { op: b"BI".to_vec(), operands: Vec::new(), inline: Some((dict, img)), span: start.take().unwrap_or(at)..end });
+                    operands.clear();
+                }
+                Err(end) => {
+                    out.skipped += end.saturating_sub(at);
+                    lx.pos = end;
+                    start = None;
+                    operands.clear();
+                }
+            },
             _ => {
                 let s = start.take().unwrap_or(at);
                 out.ops.push(Op { op: kw.to_vec(), operands: std::mem::take(&mut operands), inline: None, span: s..lx.pos });
@@ -141,8 +148,9 @@ pub fn parse(data: &[u8]) -> Parsed {
     out
 }
 
-/// Read an inline image starting after `BI`: (parameters, data, position after `EI`).
-fn inline_image(data: &[u8], pos: usize) -> (Dict, Vec<u8>, usize) {
+/// Read an inline image starting after `BI`: (parameters, data, position after `EI`). `Err` holds
+/// the position after the `EI` (or the end of the stream) of an image whose parameters can't be read.
+fn inline_image(data: &[u8], pos: usize) -> Result<(Dict, Vec<u8>, usize), usize> {
     let mut lx = Lexer::new(data, pos);
     let mut dict = Dict::new();
     loop {
@@ -150,17 +158,103 @@ fn inline_image(data: &[u8], pos: usize) -> (Dict, Vec<u8>, usize) {
         if lx.eat_keyword(b"ID") {
             break;
         }
-        let Ok(Object::Name(k)) = lx.object() else {
-            return (dict, Vec::new(), data.len());
+        let at = lx.pos;
+        let entry = match lx.object() {
+            Ok(Object::Name(k)) => lx.object().ok().map(|v| (k, v)),
+            _ => None,
         };
-        let Ok(v) = lx.object() else {
-            return (dict, Vec::new(), data.len());
+        let Some((k, v)) = entry else {
+            // A stream that ends inside the parameters is cut short, not unreadable: keep what was read.
+            if at >= data.len() {
+                return Ok((dict, Vec::new(), data.len()));
+            }
+            // Without an `EI` after it, the image runs to the end of the stream.
+            return Err(end_of_image(data, at).map_or(data.len(), |(_, end)| end));
         };
         dict.set(k, v);
     }
     // One whitespace byte separates ID from the data.
     let begin = (lx.pos + 1).min(data.len());
-    // The data ends at whitespace + `EI` + (whitespace or end). Search for that pattern.
+    let end = unfiltered_image_end(data, begin, &dict).or_else(|| end_of_image(data, begin));
+    Ok(match end {
+        Some((end_data, end)) => (dict, data[begin..end_data].to_vec(), end),
+        None => (dict, data[begin..].to_vec(), data.len()),
+    })
+}
+
+/// An unfiltered image's samples determine its length, including byte padding per row.
+/// Binary samples may themselves contain whitespace + `EI` + whitespace, so use the known
+/// length when the actual terminator follows it. Unknown or damaged layouts keep the heuristic.
+fn unfiltered_image_end(data: &[u8], begin: usize, dict: &Dict) -> Option<(usize, usize)> {
+    for key in [b"Filter".as_slice(), b"F"] {
+        if let Some(filter) = dict.get(key)
+            && !matches!(filter, Object::Null)
+            && !matches!(filter, Object::Array(filters) if filters.is_empty())
+        {
+            return None;
+        }
+    }
+    for (full, short) in
+        [(b"Width".as_slice(), b"W".as_slice()), (b"Height", b"H"), (b"ColorSpace", b"CS"), (b"BitsPerComponent", b"BPC"), (b"ImageMask", b"IM")]
+    {
+        if let (Some(full), Some(short)) = (dict.get(full), dict.get(short))
+            && full != short
+        {
+            return None;
+        }
+    }
+    let get = |full: &[u8], short: &[u8]| dict.get(full).or_else(|| dict.get(short));
+    let width = usize::try_from(get(b"Width", b"W")?.as_int()?).ok().filter(|n| *n > 0)?;
+    let height = usize::try_from(get(b"Height", b"H")?.as_int()?).ok().filter(|n| *n > 0)?;
+    let mask = match get(b"ImageMask", b"IM") {
+        None | Some(Object::Null | Object::Bool(false)) => false,
+        Some(Object::Bool(true)) => true,
+        _ => return None,
+    };
+    let bits = match get(b"BitsPerComponent", b"BPC") {
+        None | Some(Object::Null) => None,
+        Some(value) => Some(value.as_int()?),
+    };
+    let (components, bits) = if mask {
+        if bits.is_some_and(|bits| bits != 1) {
+            return None;
+        }
+        (1usize, 1usize)
+    } else {
+        let (components, max_bits) = match get(b"ColorSpace", b"CS")? {
+            Object::Name(name) => match name.as_slice() {
+                b"DeviceGray" | b"G" => (1, 16),
+                b"DeviceRGB" | b"RGB" => (3, 16),
+                b"DeviceCMYK" | b"CMYK" => (4, 16),
+                _ => return None,
+            },
+            Object::Array(space) if space.len() == 4 && matches!(space.first().and_then(Object::as_name), Some(b"Indexed" | b"I")) => (1, 8),
+            _ => return None,
+        };
+        let bits = match bits? {
+            bits @ (1 | 2 | 4 | 8 | 16) => bits as usize,
+            _ => return None,
+        };
+        if bits > max_bits {
+            return None;
+        }
+        (components, bits)
+    };
+    let row = width.checked_mul(components)?.checked_mul(bits)?.div_ceil(8);
+    let end_data = begin.checked_add(row.checked_mul(height)?)?;
+    let after = data.get(end_data..)?;
+    if !after.first().is_some_and(|b| is_ws(*b)) {
+        return None;
+    }
+    let separator = after.iter().position(|b| !is_ws(*b))?;
+    let ei = end_data.checked_add(separator)?;
+    let end = ei.checked_add(2)?;
+    if data.get(ei..end) == Some(b"EI") && data.get(end).is_none_or(|b| is_ws(*b) || is_delim(*b)) { Some((end_data, end)) } else { None }
+}
+
+/// Where inline image data starting at `begin` ends: (end of the data, position after `EI`). The
+/// data ends at whitespace + `EI` + (whitespace, a delimiter or the end).
+fn end_of_image(data: &[u8], begin: usize) -> Option<(usize, usize)> {
     let mut i = begin;
     while i + 2 <= data.len() {
         if data[i] == b'E'
@@ -169,11 +263,11 @@ fn inline_image(data: &[u8], pos: usize) -> (Dict, Vec<u8>, usize) {
             && data.get(i + 2).is_none_or(|b| is_ws(*b) || is_delim(*b))
         {
             let end_data = if i > begin && is_ws(data[i - 1]) { i - 1 } else { i };
-            return (dict, data[begin..end_data].to_vec(), i + 2);
+            return Some((end_data, i + 2));
         }
         i += 1;
     }
-    (dict, data[begin..].to_vec(), data.len())
+    None
 }
 
 /// Write one operator (with a trailing newline).

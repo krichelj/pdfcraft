@@ -43,12 +43,13 @@ pub fn bump_fork(current: &str, tag_prefix: &str) -> Result<String, String> {
     }
     let base = base_version(current);
     let prefix = format!("{base}-{tag_prefix}");
-    if let Some(rev_str) = current.strip_prefix(&prefix) {
-        if let Ok(rev) = rev_str.parse::<u64>() {
-            let candidate = format!("{prefix}{}", rev + 1);
-            validate(&candidate)?;
-            return Ok(candidate);
-        }
+    if let Some(rev_str) = current.strip_prefix(&prefix)
+        && let Ok(rev) = rev_str.parse::<u64>()
+    {
+        let next = rev.checked_add(1).ok_or_else(|| format!("`{current}`: patchlevel overflows"))?;
+        let candidate = format!("{prefix}{next}");
+        validate(&candidate)?;
+        return Ok(candidate);
     }
     let candidate = format!("{base}-{tag_prefix}1");
     validate(&candidate)?;
@@ -192,9 +193,7 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
             let new = bump_fork(&current, tag_prefix)?;
             set_version(root, &path, &text, &new)
         }
-        ["set", new] => {
-            set_version(root, &path, &text, new)
-        }
+        ["set", new] => set_version(root, &path, &text, new),
         _ => Err("usage: cargo xtask version [base | set X.Y.Z[-pre] | fork [tag] | bump-fork [tag]]".into()),
     }
 }
@@ -268,5 +267,19 @@ mod tests {
     fn the_real_manifest_has_a_valid_version() {
         let text = std::fs::read_to_string(crate::gates::root().join("Cargo.toml")).unwrap();
         validate(&read(&text).unwrap()).unwrap();
+    }
+
+    /// The `rust-version = "1.NN"` line of a manifest, as the minor number.
+    fn minor_of_rust_version(manifest: &str) -> u32 {
+        let line = manifest.lines().find(|l| l.starts_with("rust-version = \"")).unwrap();
+        line.split('"').nth(1).unwrap().split('.').nth(1).unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn workspace_rust_version_covers_the_ui_crate() {
+        let root = crate::gates::root();
+        let workspace = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        let ui = std::fs::read_to_string(root.join("crates/ui-egui/Cargo.toml")).unwrap();
+        assert!(minor_of_rust_version(&workspace) >= minor_of_rust_version(&ui));
     }
 }

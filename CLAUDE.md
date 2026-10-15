@@ -1,4 +1,6 @@
-# PdfCraft — instructions for agents
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 PdfCraft is a clean-room, open-source, Rust-native PDF application targeting Adobe Acrobat Pro parity. It runs natively on macOS, Windows, Linux and FreeBSD, and on the web via WASM. It is the sibling of `../photocraft` (a Photoshop-class editor) and follows the same conventions.
 
@@ -42,7 +44,7 @@ do not edit, fix, build or run them here, and take upstream's versions on every 
 2. Read that task in `plan/execution-plan.md` §3, the relevant section of `plan/architecture.md`, and the README of the crate you're touching.
 3. Follow the **autonomous operation protocol** in `plan/execution-plan.md` §7 (orient → plan → implement + test → verify → record → commit). Don't stop to ask unless §7 lists the decision as the user's.
 
-`plan/` is gitignored (local-only, like PhotoCraft). The machine-readable parity checklist lives in `parity/` (committed).
+`plan/` is gitignored (local-only, like PhotoCraft) and may be absent in a fresh checkout; if so, fall back to `ROADMAP.md` and `parity/`, and say so. The machine-readable parity checklist lives in `parity/` (committed).
 
 ## Non-negotiables
 - **Assets: read `AGENTS.md` §1 before adding or showing any icon, image, font or document.** No assets from Adobe products, ever. Only openly licensed or contributor-original assets are allowed, each with an entry in `ATTRIBUTION.toml`. `cargo xtask assets` enforces this. `AGENTS.md` overrides this file.
@@ -64,8 +66,26 @@ do not edit, fix, build or run them here, and take upstream's versions on every 
   - No `unsafe` (`unsafe_code = "forbid"`).
   - Every crash fix gets a synthetic regression test. See `AGENTS.md` §4 (and, for team members, the internal `craftrules/standards/never-crash.md`).
 - **Rust only** in the product and build (`xtask`). No handwritten JS/TS.
-- **Quality gates** before every commit: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace`, and the wasm check once `xtask ci` exists (M0).
-- **Commits:** one task id per commit (e.g. `M1.4: xref stream reader`). Commit only green states. End messages with the attribution line required by the environment.
+- **Review every update as you make it, at four zooms.** Not an end-of-task pass — a per-update habit, so a defect never gets built on. **Clause:** checked arithmetic, `get()` not `[i]`, char-boundary slicing, the right error through `?`, `<` against `<=`, the 1-based/0-based seam, capped allocations. **Function:** is it total — name an input that panics; walk empty, zero, max, malformed, cyclic; is the return type honest. **File/module:** two sources of truth, dead or duplicated code, is the public surface still smallest and the doc comment still true. **Project:** layering, wasm, undo/redo, save fidelity, encryption and permissions, a matching `automation` tool or registry entry, and whether a `parity/` status or note just became untrue. Scale the zoom to the change, and fix what a level turns up before widening.
+  - Tests mirror the zooms: property → unit → crate integration → end-to-end.
+  - **Prove a test fails before the fix by actually reverting the fix.** A test nobody has seen fail is not evidence. This has caught two worthless tests in this repo: one confinement test passed with path resolution switched off entirely, because the tools failed on a nonexistent document id before reaching the path.
+  - **Rebasing is a review step, not a mechanical one.** Read every hunk you resolve, and the auto-merged hunks in the files you touched too — `main` moves fast enough that a file can change by hundreds of lines under a branch.
+- **External PRs are held to safety, security and completeness before style.** Provenance first (no Adobe-derived asset, no committed font, no copied GPL/AGPL code, behaviour from the spec and not from reading another implementation), then no new panic path or `unsafe`, then `--root` confinement on every path including ones reached by nested dispatch, opt-in-only MCP and control channel, no new outbound network, then a headless `automation` tool, tests at the right zoom and an honest `parity/` entry. Provenance is the part a contributor cannot be expected to know, and the only part that cannot be undone after merge.
+- **Quality gates** before every commit: `cargo fmt --check`, clippy with `-D warnings`, the tests, `cargo xtask layers`, `cargo xtask assets`, and `cargo xtask wasm`. `cargo xtask ci` runs all of them plus deny and parity, workspace-wide, stopping at the first failure (heavy: see the next point).
+  - **Scope builds and tests to the crates you touched** — `cargo clippy -p <crate> -j 2 --all-targets` and `cargo test -p <crate> -j 2`, under a `timeout`. A full `--workspace` build has locked up a development machine's CPU; it is CI's job and CI runs it on every PR. Run the workspace sweep locally only when you have a reason to and the machine is free.
+- **Commits and PRs:** `main` is the only integration branch and is **never pushed to directly**. Branch from an up-to-date `main` as `<type>/<slug>` (`feat/`, `fix/`, `docs/`, `chore/`, `refactor/`), one task id per commit (e.g. `M1.4: xref stream reader`), commit only green states, and open a PR into `main` using `.github/pull_request_template.md`. Merge only when CI is green.
+  - **`main` moves fast enough that PRs rot.** It took 396 commits in the three days to 2026-10-12, and most open PRs are conflicting at any given time. Rebase your own branch the same day `main` moves under it, and ask the author to rebase theirs — never rewrite a contributor's branch. Conflict risk tracks how *contested* the files are, not how large the change is: tooling, tests and docs are nearly free, while `crates/fonts`, `ui-egui` and the i18n catalogues are where several people collide at once.
+
+## Commands
+- Single crate / single test: `cargo test -p pdfcraft-cos -j 2`, `cargo test -p pdfcraft-cos -j 2 <name_filter>`, `cargo test -p pdfcraft-ui-egui -j 2 --test control`.
+- Individual gates: `cargo xtask layers`, `cargo xtask wasm`, `cargo xtask assets [--write]`, `cargo xtask deny` (needs cargo-deny), `cargo check -p pdfcraft-cli --no-default-features` (build without the MCP server).
+- Corpus: `cargo xtask corpus` fetches pdf.js test files into `corpus/`; `cargo xtask check` sweeps them against `xtask/baselines`; `cargo xtask text-oracle` compares text extraction with pdftotext.
+- `cargo xtask` with no args lists every command (`xtask/src/main.rs`). `cargo xtask version set X.Y.Z` bumps the workspace version.
+
+## Architecture
+- Workspace: `crates/*` (libraries, all named `pdfcraft-<dir>`), `apps/pdfcraft` (desktop), `apps/pdfcraft-cli` (headless runner + MCP), `apps/pdfcraft-web` (Trunk/WASM, not a default member), `xtask`. `vendor/` is excluded from the workspace.
+- Layers are enforced by `cargo xtask layers` from the table in `xtask/src/layers.rs`: L0-1 standalone (`geom`, `filters`, `crypt`, `arlington`, `cos`) → L2 object model (`model`, `content`, `fonts`) → L3 (`render`, `annot`, `forms`, `js`, `xfa`) → L4 features (`edit`, `organize`, `redact`, `sign`, `ocr`, `export`, ...) → L5 interaction → L6 `engine` → L7 frontends (`ui-egui`, `automation`). A crate may depend only on lower layers; `testkit` and `oracle` are test-only (`Class::Testkit`). Adding a crate means adding it to that table.
+- `pdfcraft-engine` is the façade every frontend uses (sessions, edits, undo, save, tool catalogue). The UI and `pdfcraft-automation` both drive it, so engine features are testable headlessly via `pdfcraft-cli run`.
 
 ## Running and looking at the app
 - `cargo run -p pdfcraft -- <file.pdf>` opens the desktop app.
