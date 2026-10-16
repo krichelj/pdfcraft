@@ -459,6 +459,8 @@
 	Later	По-късно
 	Install and relaunch	Инсталиране и рестартиране
 	Couldn't start the update: {e}	Неуспешно стартиране на актуализацията: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Имате версия {c}. „Инсталиране и рестартиране“ изтегля новата версия, проверява я и отваря PdfCraft отново.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Проверява в GitHub за най-новото издание. Нищо не се изтегля и инсталира, докато не изберете „Инсталиране и рестартиране“.
 	none	няма
 	Declared conformance: {shown}	Декларирано съответствие: {shown}
 	Output intent: {list}	Изходно предназначение: {list}

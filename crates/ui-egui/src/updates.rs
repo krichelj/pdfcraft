@@ -200,13 +200,12 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
             Check::Done(Ok(r)) if is_newer(&r.version, current) => {
                 let version = r.version.trim_start_matches(['v', 'V']);
                 ui.label(egui::RichText::new(crate::i18n::fmt(tl!("PdfCraft {v} is available."), &[("v", version)])).strong());
-                ui.label(
-                    egui::RichText::new(crate::i18n::fmt(
-                        tl!("You have version {c}. Download the new version from its release page."),
-                        &[("c", current)],
-                    ))
-                    .color(t.text_muted),
-                );
+                let how = if can_install {
+                    tl!("You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.")
+                } else {
+                    tl!("You have version {c}. Download the new version from its release page.")
+                };
+                ui.label(egui::RichText::new(crate::i18n::fmt(how, &[("c", current)])).color(t.text_muted));
                 download = Some(r.url.clone());
                 if can_install {
                     installable = Some(r.version.clone());
@@ -231,11 +230,12 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
             }
         }
         ui.add_space(10.0);
-        ui.label(
-            egui::RichText::new(tl!("Asks GitHub for the latest release. Nothing is downloaded or installed automatically."))
-                .color(t.text_muted)
-                .small(),
-        );
+        let note = if installable.is_some() {
+            tl!("Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.")
+        } else {
+            tl!("Asks GitHub for the latest release. Nothing is downloaded or installed automatically.")
+        };
+        ui.label(egui::RichText::new(note).color(t.text_muted).small());
         ui.add_space(12.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if let Some(version) = installable.take() {

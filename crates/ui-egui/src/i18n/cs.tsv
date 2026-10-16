@@ -859,6 +859,8 @@ key	Space	Mezerník
 	Later	Později
 	Install and relaunch	Nainstalovat a znovu spustit
 	Couldn't start the update: {e}	Aktualizaci nelze spustit: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Máte verzi {c}. Možnost Nainstalovat a znovu spustit stáhne novou verzi, ověří ji a znovu otevře PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Zjistí na GitHubu nejnovější vydání. Nic se nestáhne ani nenainstaluje, dokud nezvolíte Nainstalovat a znovu spustit.
 	none	žádná
 	Declared conformance: {shown}	Deklarovaná shoda: {shown}
 	Output intent: {list}	Výstupní záměr: {list}

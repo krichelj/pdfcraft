@@ -782,6 +782,8 @@
 	Later	Пізніше
 	Install and relaunch	Установити й перезапустити
 	Couldn't start the update: {e}	Не вдалося почати оновлення: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	У вас версія {c}. «Установити й перезапустити» завантажить нову версію, перевірить її та знову відкриє PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Запитує в GitHub останній випуск. Нічого не завантажується й не встановлюється, доки ви не виберете «Установити й перезапустити».
 	none	немає
 	Declared conformance: {shown}	Заявлена відповідність: {shown}
 	Output intent: {list}	Профіль виводу: {list}

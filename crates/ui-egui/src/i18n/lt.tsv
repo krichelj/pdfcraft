@@ -685,6 +685,8 @@
 	Later	Vėliau
 	Install and relaunch	Įdiegti ir paleisti iš naujo
 	Couldn't start the update: {e}	Nepavyko pradėti naujinimo: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Turite {c} versiją. „Įdiegti ir paleisti iš naujo“ atsisiunčia naują versiją, ją patikrina ir vėl atveria PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Klausia GitHub apie naujausią leidimą. Niekas neatsiunčiama ir neįdiegiama, kol nepasirenkate „Įdiegti ir paleisti iš naujo“.
 	Later in tab order	Vėlesnė skirtukų tvarka
 	Layers	Sluoksniai
 	Layers Panel and Page	Sluoksnių skydelis ir puslapis

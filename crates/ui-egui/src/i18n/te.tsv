@@ -759,6 +759,8 @@ comment menu	Edit	సవరించు
 	Later	తర్వాత
 	Install and relaunch	ఇన్‌స్టాల్ చేసి మళ్లీ ప్రారంభించండి
 	Couldn't start the update: {e}	అప్‌డేట్‌ను ప్రారంభించడం సాధ్యం కాలేదు: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	మీ వద్ద వెర్షన్ {c} ఉంది. "ఇన్‌స్టాల్ చేసి మళ్లీ ప్రారంభించండి" కొత్త వెర్షన్‌ను డౌన్‌లోడ్ చేసి, తనిఖీ చేసి, PdfCraftను మళ్లీ తెరుస్తుంది.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	తాజా విడుదల కోసం GitHubని అడుగుతుంది. మీరు "ఇన్‌స్టాల్ చేసి మళ్లీ ప్రారంభించండి" ఎంచుకునే వరకు ఏదీ డౌన్‌లోడ్ లేదా ఇన్‌స్టాల్ కాదు.
 	none	ఏదీ లేదు
 	Declared conformance: {shown}	ప్రకటించిన అనుగుణ్యత: {shown}
 	Output intent: {list}	అవుట్‌పుట్ ఇంటెంట్: {list}

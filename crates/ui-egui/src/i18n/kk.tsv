@@ -741,6 +741,8 @@
 	Later	Кейінірек
 	Install and relaunch	Орнату және қайта іске қосу
 	Couldn't start the update: {e}	Жаңартуды бастау мүмкін болмады: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Сізде {c} нұсқасы бар. «Орнату және қайта іске қосу» жаңа нұсқаны жүктеп алады, тексереді және PdfCraft-ты қайта ашады.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	GitHub-тан соңғы шығарылымды сұрайды. «Орнату және қайта іске қосу» таңдалмайынша ештеңе жүктелмейді және орнатылмайды.
 	none	жоқ
 	Declared conformance: {shown}	Жарияланған сәйкестік: {shown}
 	Output intent: {list}	Шығыс профилі: {list}

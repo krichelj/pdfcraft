@@ -755,6 +755,8 @@
 	Later	Később
 	Install and relaunch	Telepítés és újraindítás
 	Couldn't start the update: {e}	A frissítés indítása nem sikerült: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Az Ön verziója: {c}. A „Telepítés és újraindítás” letölti az új verziót, ellenőrzi, majd újra megnyitja a PdfCraftot.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	A GitHubtól kérdezi le a legújabb kiadást. Semmi sem töltődik le és települ, amíg nem választja a „Telepítés és újraindítás” lehetőséget.
 	none	nincs
 	Declared conformance: {shown}	Megadott megfelelőség: {shown}
 	Output intent: {list}	Kimeneti cél: {list}

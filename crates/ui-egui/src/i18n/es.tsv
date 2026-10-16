@@ -778,6 +778,8 @@
 	Later	Más tarde
 	Install and relaunch	Instalar y reiniciar
 	Couldn't start the update: {e}	No se pudo iniciar la actualización: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Tiene la versión {c}. «Instalar y reiniciar» descarga la nueva versión, la comprueba y vuelve a abrir PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Consulta a GitHub la versión más reciente. No se descarga ni se instala nada hasta que elija «Instalar y reiniciar».
 	none	ninguno
 	Declared conformance: {shown}	Conformidad declarada: {shown}
 	Output intent: {list}	Propósito de salida: {list}

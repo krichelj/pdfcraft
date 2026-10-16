@@ -681,6 +681,8 @@ theme	Appearance	Giao diện
 	Later	Để sau
 	Install and relaunch	Cài đặt và khởi động lại
 	Couldn't start the update: {e}	Không thể bắt đầu cập nhật: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Bạn đang dùng phiên bản {c}. "Cài đặt và khởi động lại" sẽ tải phiên bản mới, kiểm tra và mở lại PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Hỏi GitHub về bản phát hành mới nhất. Không có gì được tải xuống hoặc cài đặt cho đến khi bạn chọn "Cài đặt và khởi động lại".
 	Later in tab order	Muộn hơn theo thứ tự tab
 	Layers	Các lớp
 	Layers Panel and Page	Bảng Các lớp và trang

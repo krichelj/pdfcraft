@@ -146,6 +146,10 @@ fn a_newer_release_is_installed_and_the_app_quits_to_relaunch() {
     settle(&mut h);
     h.get_by_label_contains("PdfCraft 99.0.0 is available");
     assert!(h.query_by_label("Download").is_none(), "an installable update isn't sent to the browser");
+    h.get_by_label_contains("Install and relaunch downloads the new version, checks it, and reopens PdfCraft");
+    h.get_by_label_contains("Nothing is downloaded or installed until you choose Install and relaunch");
+    assert!(h.query_by_label_contains("from its release page").is_none(), "no stale download advice");
+    assert!(h.query_by_label_contains("installed automatically").is_none());
     h.get_by_label("Install and relaunch").click();
     h.step();
     assert_eq!(*asked.lock().unwrap(), ["v99.0.0"], "the installer gets the release tag");

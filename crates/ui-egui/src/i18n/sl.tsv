@@ -1006,6 +1006,8 @@
 	Later	Prekliči
 	Install and relaunch	Namesti in znova zaženi
 	Couldn't start the update: {e}	Posodobitve ni bilo mogoče začeti: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Imate različico {c}. »Namesti in znova zaženi« prenese novo različico, jo preveri in znova odpre PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Pri GitHubu preveri najnovejšo izdajo. Nič se ne prenese ali namesti, dokler ne izberete »Namesti in znova zaženi«.
 	Later in tab order	Pozneje v vrstnem redu tabulatorja
 	Layers	Plasti
 	Layers Panel and Page	Razdelek in stran s plastmi
