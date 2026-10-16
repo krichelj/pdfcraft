@@ -13,7 +13,8 @@ do not edit, fix, build or run them here, and take upstream's versions on every 
 `release.yml` runs only `version`, `macos` and `release`, on the own Linux runners
 (own-ci-runners), cross-building with `packaging/macos/cross-package.sh`. Shared code and its tests
 (`ci.yml`) still run, because the Mac app is built from them; CI/CD runs no other non-Mac check (no
-wasm32/web, Windows, Linux-desktop or Flatpak lint), and `packaging-lint.yml` covers only the macOS
+wasm32/web, Windows, Linux-desktop, Flatpak or Nix checks; upstream workflows for other platforms,
+such as `freebsd.yml`, `windows-arm64.yml` and `nix.yml`, are deleted on merge), and `packaging-lint.yml` covers only the macOS
 packaging scripts and property lists. The `Draft GitHub Release` job runs in the `release`
 environment, which deploys only from the `release` branch.
 
