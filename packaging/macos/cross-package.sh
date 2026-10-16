@@ -50,6 +50,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$DIST"
 cp "$BIN/pdfcraft" "$APP/Contents/MacOS/PdfCraft"
 cp "$ROOT/assets/app-icon/pdfcraft.icns" "$APP/Contents/Resources/PdfCraft.icns"
 copy_font_licences "$APP/Contents/Resources"
+# Help > Check for updates > Install and relaunch runs this copy (apps/pdfcraft/src/updates.rs).
+install -m 755 "$HERE/install.sh" "$APP/Contents/Resources/install.sh"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   -e "s/@BUILD_SHA@/${PDFCRAFT_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"

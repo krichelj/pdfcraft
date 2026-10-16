@@ -416,6 +416,10 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	向 GitHub 搜尋最新版本。不會自動下載或安裝任何內容。
 	Download	下載
 	Later	稍後
+	Install and relaunch	安裝並重新啟動
+	Couldn't start the update: {e}	無法開始更新：{e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	你的版本是 {c}。「安裝並重新啟動」會下載新版本、進行驗證，然後重新開啟 PdfCraft。
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	向 GitHub 查詢最新版本。在你選擇「安裝並重新啟動」之前，不會下載或安裝任何內容。
 	none	無
 	Declared conformance: {shown}	宣告的一致性：{shown}
 	Output intent: {list}	輸出意圖：{list}

@@ -397,6 +397,10 @@
 	You have version {c}. All releases are listed at {page}.	Έχετε την έκδοση {c}. Όλες οι εκδόσεις βρίσκονται στη διεύθυνση {page}.
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	Αναζητά την τελευταία έκδοση στο GitHub. Δεν γίνεται αυτόματα λήψη ή εγκατάσταση.
 	Later	Αργότερα
+	Install and relaunch	Εγκατάσταση και επανεκκίνηση
+	Couldn't start the update: {e}	Δεν ήταν δυνατή η έναρξη της ενημέρωσης: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Έχετε την έκδοση {c}. Η «Εγκατάσταση και επανεκκίνηση» κατεβάζει τη νέα έκδοση, την ελέγχει και ανοίγει ξανά το PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Ρωτά το GitHub για την τελευταία έκδοση. Τίποτα δεν λαμβάνεται ή εγκαθίσταται μέχρι να επιλέξετε «Εγκατάσταση και επανεκκίνηση».
 	none	κανένα
 	Declared conformance: {shown}	Δηλωμένη συμμόρφωση: {shown}
 	Output intent: {list}	Προφίλ χρωματικής εξόδου: {list}

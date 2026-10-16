@@ -387,6 +387,19 @@ fn app_creator<'a>(
             app.motion.source = Some(motion::source());
         }
         app.update_source = Some(std::sync::Arc::new(updates::latest_release));
+        // Install and relaunch, when this runs from an installed PdfCraft.app that carries the
+        // installer; otherwise the Updates dialog offers the release page.
+        let logs = pdfcraft_ui_egui::portable::data_dir()
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| eframe::storage_dir("PdfCraft"))
+            .map(|d| d.join("logs"));
+        if let (Ok(exe), Some(logs)) = (std::env::current_exe(), logs)
+            && let Some(installer) = updates::Installer::bundled(&exe, &logs)
+        {
+            app.update_installer = Some(std::sync::Arc::new(move |tag: &str| installer.start(tag)));
+        }
+        // Once per launch, quietly: the Updates dialog opens only when a newer release exists.
+        app.check_for_updates_quietly();
         app.printer_source = Some(pdfcraft_ui_egui::system_printers());
         app.os_key_store_ids = cfg!(any(target_os = "macos", target_os = "windows"));
         #[cfg(target_os = "macos")]

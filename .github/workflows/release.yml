@@ -150,7 +150,21 @@ jobs:
             gh release upload "$tag" --clobber -- *
           else
             echo "Creating draft $tag"
-            gh release create "$tag" --draft --title "$title" --target "$GITHUB_SHA" --generate-notes "${pre[@]}" -- *
+            # Prepended to the generated notes: how to install without Gatekeeper's block (the
+            # builds are ad-hoc signed, not notarized; packaging/macos/install.sh says why).
+            notes="$(cat <<'NOTES'
+          ## Install on a Mac with Apple silicon
+
+          Run this in Terminal. It downloads this release, checks it against `SHA256SUMS.txt`, and puts PdfCraft in Applications; run it again to update.
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/krichelj/pdfcraft/main/packaging/macos/install.sh | bash
+          ```
+
+          The DMG works too, but these builds aren't notarized by Apple, so macOS blocks a copy downloaded in a browser ("Apple could not verify PdfCraft"). To open it anyway, use System Settings > Privacy & Security > Open Anyway, or run `xattr -dr com.apple.quarantine /Applications/PdfCraft.app`.
+          NOTES
+            )"
+            gh release create "$tag" --draft --title "$title" --target "$GITHUB_SHA" --notes "$notes" --generate-notes "${pre[@]}" -- *
           fi
           {
             echo "Draft release **$title** at \`${GITHUB_SHA::9}\`:"

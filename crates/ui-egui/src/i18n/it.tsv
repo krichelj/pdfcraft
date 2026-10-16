@@ -779,6 +779,10 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	Chiede a GitHub qual è l'ultima versione. Nulla viene scaricato o installato automaticamente.
 	Download	Scarica
 	Later	Più tardi
+	Install and relaunch	Installa e riavvia
+	Couldn't start the update: {e}	Impossibile avviare l'aggiornamento: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Hai la versione {c}. «Installa e riavvia» scarica la nuova versione, la verifica e riapre PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Chiede a GitHub l'ultima versione. Non viene scaricato né installato nulla finché non scegli «Installa e riavvia».
 	none	nessuno
 	Declared conformance: {shown}	Conformità dichiarata: {shown}
 	Output intent: {list}	Output intent: {list}

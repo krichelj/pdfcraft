@@ -5,7 +5,7 @@ use std::sync::Arc;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use pdfcraft_ui_egui::PdfCraftApp;
-use pdfcraft_ui_egui::updates::{Release, UpdateSource, is_newer};
+use pdfcraft_ui_egui::updates::{Release, UpdateInstaller, UpdateSource, is_newer};
 
 fn source(answer: Result<&str, &str>) -> UpdateSource {
     let answer = answer.map(str::to_string).map_err(str::to_string);
@@ -87,7 +87,8 @@ fn an_up_to_date_or_failed_check_says_so() {
 
 #[test]
 fn nothing_is_asked_until_the_user_checks() {
-    // No check at start (the owner's decision): the source is only called from the command.
+    // The app model never checks by itself: the desktop app asks once at launch, through
+    // `check_for_updates_quietly`, and otherwise only the command asks.
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = calls.clone();
     let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
@@ -109,4 +110,119 @@ fn nothing_is_asked_until_the_user_checks() {
     settle(&mut h);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     h.get_by_label_contains("PdfCraft 99.0.0 is available");
+}
+
+/// An installer stand-in: records the versions it was asked for and answers `answer`.
+fn installer(answer: Result<(), &str>) -> (UpdateInstaller, Arc<std::sync::Mutex<Vec<String>>>) {
+    let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = asked.clone();
+    let answer = answer.map_err(str::to_string);
+    let install: UpdateInstaller = Arc::new(move |v: &str| {
+        log.lock().unwrap().push(v.to_string());
+        answer.clone()
+    });
+    (install, asked)
+}
+
+fn harness_with(answer: Result<&str, &str>, install: Option<UpdateInstaller>) -> Harness<'static, PdfCraftApp> {
+    Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.update_source = Some(source(answer));
+        app.update_installer = install;
+        app
+    })
+}
+
+fn closing(h: &Harness<'static, PdfCraftApp>) -> bool {
+    h.output().viewport_output.values().any(|v| v.commands.iter().any(|c| matches!(c, egui::ViewportCommand::Close)))
+}
+
+#[test]
+fn a_newer_release_is_installed_and_the_app_quits_to_relaunch() {
+    let (install, asked) = installer(Ok(()));
+    let mut h = harness_with(Ok("v99.0.0"), Some(install));
+    h.state_mut().execute("help.check_updates");
+    settle(&mut h);
+    h.get_by_label_contains("PdfCraft 99.0.0 is available");
+    assert!(h.query_by_label("Download").is_none(), "an installable update isn't sent to the browser");
+    h.get_by_label_contains("Install and relaunch downloads the new version, checks it, and reopens PdfCraft");
+    h.get_by_label_contains("Nothing is downloaded or installed until you choose Install and relaunch");
+    assert!(h.query_by_label_contains("from its release page").is_none(), "no stale download advice");
+    assert!(h.query_by_label_contains("installed automatically").is_none());
+    h.get_by_label("Install and relaunch").click();
+    h.step();
+    assert_eq!(*asked.lock().unwrap(), ["v99.0.0"], "the installer gets the release tag");
+    assert!(closing(&h), "then the app quits, asking about unsaved work like the close button");
+    h.run_steps(2);
+    assert!(h.query_by_label_contains("is available").is_none(), "and the dialog is gone");
+}
+
+#[test]
+fn an_installer_that_cannot_start_says_why_and_the_app_stays() {
+    let (install, asked) = installer(Err("couldn't open the log"));
+    let mut h = harness_with(Ok("v99.0.0"), Some(install));
+    h.state_mut().execute("help.check_updates");
+    settle(&mut h);
+    h.get_by_label("Install and relaunch").click();
+    h.step();
+    assert_eq!(asked.lock().unwrap().len(), 1);
+    assert!(!closing(&h), "nothing to relaunch into: the app keeps running");
+    h.run_steps(2);
+    h.get_by_label_contains("Couldn't start the update: couldn't open the log");
+    h.get_by_label("Later").click();
+    h.run_steps(2);
+    assert!(h.query_by_label_contains("is available").is_none());
+}
+
+#[test]
+fn an_up_to_date_app_offers_nothing_to_install() {
+    let (install, asked) = installer(Ok(()));
+    let mut h = harness_with(Ok(concat!("v", env!("CARGO_PKG_VERSION"))), Some(install));
+    h.state_mut().execute("help.check_updates");
+    settle(&mut h);
+    h.get_by_label_contains("is up to date");
+    assert!(h.query_by_label("Install and relaunch").is_none());
+    assert!(asked.lock().unwrap().is_empty());
+}
+
+/// Run frames until `source` has answered `calls` times, then a few more so the answer is read.
+fn until_asked(h: &mut Harness<'static, PdfCraftApp>, calls: &std::sync::atomic::AtomicUsize, n: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while calls.load(std::sync::atomic::Ordering::SeqCst) < n {
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for the update check");
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    h.run_steps(4);
+}
+
+#[test]
+fn the_launch_check_is_silent_unless_a_newer_release_exists() {
+    for (latest, shown) in [(concat!("v", env!("CARGO_PKG_VERSION")), false), ("v0.0.1", false), ("v99.0.0", true)] {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        let latest = latest.to_string();
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.update_source = Some(Arc::new(move || {
+                let r = Ok(Release { url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{latest}"), version: latest.clone() });
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                r
+            }));
+            app.check_for_updates_quietly();
+            app
+        });
+        until_asked(&mut h, &calls, 1);
+        assert_eq!(h.query_by_label_contains("is available").is_some(), shown, "newer: {shown}");
+        assert!(h.query_by_label_contains("is up to date").is_none(), "an up-to-date app says nothing at launch");
+    }
+    // A failed launch check says nothing either.
+    let mut h = harness(Err("couldn't reach GitHub"));
+    h.state_mut().check_for_updates_quietly();
+    h.run_steps(20);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    h.run_steps(4);
+    assert!(h.query_by_label_contains("Couldn't check for updates").is_none());
 }

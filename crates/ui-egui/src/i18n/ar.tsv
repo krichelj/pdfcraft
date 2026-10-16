@@ -782,6 +782,10 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	يسأل GitHub عن أحدث إصدار. لا يُنزَّل أو يُثبَّت شيء تلقائيًا.
 	Download	تنزيل
 	Later	لاحقًا
+	Install and relaunch	تثبيت وإعادة التشغيل
+	Couldn't start the update: {e}	تعذّر بدء التحديث: {e}
+	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	لديك الإصدار {c}. يؤدي «تثبيت وإعادة التشغيل» إلى تنزيل الإصدار الجديد والتحقق منه ثم إعادة فتح PdfCraft.
+	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	يسأل GitHub عن أحدث إصدار. لا يُنزَّل أو يُثبَّت أي شيء حتى تختار «تثبيت وإعادة التشغيل».
 	none	لا شيء
 	Declared conformance: {shown}	المطابقة المعلنة: {shown}
 	Output intent: {list}	هدف الإخراج: {list}
