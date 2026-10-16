@@ -54,7 +54,9 @@ jobs:
             echo "::error::'$v' is not a version like 1.2.3 or 1.2.3-rc.1"
             exit 1
           fi
-          case "$v" in *-*) pre=true ;; *) pre=false ;; esac
+          # The fork's patchlevel (0.8.0-p1, CLAUDE.md) is a full release, not a pre-release:
+          # GitHub's releases/latest, which Help > Check for updates asks, skips pre-releases.
+          case "$v" in *-p[0-9]*) pre=false ;; *-*) pre=true ;; *) pre=false ;; esac
           {
             echo "version=$v"
             echo "date=$(date -u +%Y-%m-%d)"
