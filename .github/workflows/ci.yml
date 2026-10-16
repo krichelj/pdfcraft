@@ -31,6 +31,9 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # fork-notes needs the history and the release tags.
+          fetch-depth: 0
 
       # Tests and rayon use 90% of the host's hardware threads. Builds stop at BUILD_JOBS_CAP: a clean
       # build of every test binary took 74 s at 64 jobs and the same at 128, 230 and 460 (140 s at
@@ -100,6 +103,11 @@ jobs:
             || { echo "::error::cargo-nextest missing on the runner: see own-ci-runners"; exit 1; }
           cargo nextest run --workspace --no-fail-fast
           cargo test --workspace --doc
+
+      # A version bump to a fork release not released yet needs its record (docs/fork/releases);
+      # the Release workflow refuses one without it, so the PR that bumps the version does too.
+      - name: Fork release notes
+        run: cargo xtask fork-notes pending
 
       - name: Layering
         if: runner.os == 'Linux'

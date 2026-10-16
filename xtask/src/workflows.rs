@@ -85,6 +85,21 @@ mod tests {
     }
 
     #[test]
+    fn a_release_is_refused_without_its_record() {
+        // The record (docs/fork/releases) is checked before anything is built, and is the page.
+        let release = ALL.iter().find(|(f, _)| *f == "release.yml").expect("release.yml").1;
+        let version = jobs(release).into_iter().find(|(n, _)| n == "version").expect("a version job").1;
+        assert!(version.contains("cargo xtask fork-notes body \"$V\" --commit \"$GITHUB_SHA\""), "the version job checks the record");
+        assert!(version.contains("fetch-depth: 0"), "with the history and tags it needs");
+        let draft = jobs(release).into_iter().find(|(n, _)| n == "release").expect("a release job").1;
+        assert_eq!(draft.matches("--notes-file \"$GITHUB_WORKSPACE/notes/release-notes.md\"").count(), 2, "created and updated drafts use it");
+        assert!(!draft.contains("--generate-notes"), "no notes but the record");
+        let test = jobs(CI).into_iter().find(|(n, _)| n == "test").expect("ci.yml test job").1;
+        assert!(test.contains("cargo xtask fork-notes pending"), "a bump's PR is checked too");
+        assert!(test.contains("fetch-depth: 0"));
+    }
+
+    #[test]
     fn no_workflow_pins_work_to_one_core() {
         let serial = [
             "-j 1",
