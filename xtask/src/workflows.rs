@@ -69,6 +69,22 @@ mod tests {
     }
 
     #[test]
+    fn builds_are_capped_where_more_jobs_stop_helping_not_below() {
+        // 64 is where a clean CI build stopped getting faster (ci.yml says how it was measured).
+        // A lower cap would make builds slower again; a missing one runs one job per thread.
+        for (name, job) in jobs(CI).into_iter().filter(|(_, job)| job.contains("Saturate host threads")) {
+            let cap = job
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("BUILD_JOBS_CAP="))
+                .unwrap_or_else(|| panic!("ci.yml job `{name}` sets no BUILD_JOBS_CAP"))
+                .parse::<u32>()
+                .unwrap_or_else(|e| panic!("ci.yml job `{name}`: BUILD_JOBS_CAP is not a number ({e})"));
+            assert!(cap >= 64, "ci.yml job `{name}` caps builds at {cap} jobs, below the measured 64");
+            assert!(job.contains("echo \"CARGO_BUILD_JOBS=${BUILD_JOBS}\""), "ci.yml job `{name}` builds with the capped count");
+        }
+    }
+
+    #[test]
     fn no_workflow_pins_work_to_one_core() {
         let serial = [
             "-j 1",

@@ -11,7 +11,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  CARGO_BUILD_JOBS: 230
+  # A fallback for jobs without the saturate step; see BUILD_JOBS_CAP there.
+  CARGO_BUILD_JOBS: 64
   RAYON_NUM_THREADS: 230
   RUST_TEST_THREADS: 230
 
@@ -31,13 +32,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Tests and rayon use 90% of the host's hardware threads. Builds stop at BUILD_JOBS_CAP: a clean
+      # build of every test binary took 74 s at 64 jobs and the same at 128, 230 and 460 (140 s at
+      # 16, 92 s at 32; Sanders, 2026-10-16), because cargo's dependency graph, not the core count,
+      # is the limit past 64. The rest of the host stays free for the jobs running beside this one.
       - name: Saturate host threads (saturate-the-bottleneck)
         run: |
           NPROC=$(nproc)
           JOBS=$(( NPROC * 9 / 10 ))
-          echo "Host logical cores: ${NPROC}; saturating to 90%: ${JOBS} threads"
+          BUILD_JOBS_CAP=64
+          BUILD_JOBS=$(( JOBS < BUILD_JOBS_CAP ? JOBS : BUILD_JOBS_CAP ))
+          echo "Host hardware threads: ${NPROC}; tests use ${JOBS}, builds ${BUILD_JOBS} jobs"
           {
-            echo "CARGO_BUILD_JOBS=${JOBS}"
+            echo "CARGO_BUILD_JOBS=${BUILD_JOBS}"
             echo "RAYON_NUM_THREADS=${JOBS}"
             echo "RUST_TEST_THREADS=${JOBS}"
           } >> "$GITHUB_ENV"
@@ -123,8 +130,11 @@ jobs:
         run: |
           NPROC=$(nproc)
           JOBS=$(( NPROC * 9 / 10 ))
+          # Builds stop at BUILD_JOBS_CAP, as in the test job (no faster past 64 jobs).
+          BUILD_JOBS_CAP=64
+          BUILD_JOBS=$(( JOBS < BUILD_JOBS_CAP ? JOBS : BUILD_JOBS_CAP ))
           {
-            echo "CARGO_BUILD_JOBS=${JOBS}"
+            echo "CARGO_BUILD_JOBS=${BUILD_JOBS}"
             echo "RAYON_NUM_THREADS=${JOBS}"
           } >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
