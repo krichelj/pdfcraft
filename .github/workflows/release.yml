@@ -43,6 +43,9 @@ jobs:
       prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # fork-notes needs the history and the release tags.
+          fetch-depth: 0
       - id: v
         name: Resolve version
         run: |
@@ -62,6 +65,18 @@ jobs:
             echo "prerelease=$pre"
           } >>"$GITHUB_OUTPUT"
           echo "### PdfCraft v$v (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
+      # No release without its record (docs/fork/releases/v<version>.md, CLAUDE.md fork rules): this
+      # fails, and nothing is built, when the record is missing, its summary is unwritten, or its
+      # generated part no longer matches git. Its text becomes the release page.
+      - name: Release notes (docs/fork/releases)
+        env:
+          V: ${{ steps.v.outputs.version }}
+        run: cargo xtask fork-notes body "$V" --commit "$GITHUB_SHA" >"$RUNNER_TEMP/release-notes.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
 
   # The fork's runners are Linux only (own-ci-runners), so macOS is cross-built here: zig links it,
   # the macOS SDK comes from the owner's Xcode (/scratch/XXXXX/macos-sdk).
@@ -126,6 +141,10 @@ jobs:
           pattern: release-*
           path: artifacts
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: notes
+          path: notes
       - name: Checksums
         working-directory: artifacts
         run: |
@@ -146,25 +165,14 @@ jobs:
             gh release view "$tag" --json assets --jq '.assets[].name' | while read -r asset; do
               gh release delete-asset "$tag" "$asset" --yes
             done
-            gh release edit "$tag" --draft --title "$title" --target "$GITHUB_SHA" --prerelease="$PRERELEASE"
+            gh release edit "$tag" --draft --title "$title" --target "$GITHUB_SHA" --prerelease="$PRERELEASE" \
+              --notes-file "$GITHUB_WORKSPACE/notes/release-notes.md"
             gh release upload "$tag" --clobber -- *
           else
             echo "Creating draft $tag"
-            # Prepended to the generated notes: how to install without Gatekeeper's block (the
-            # builds are ad-hoc signed, not notarized; packaging/macos/install.sh says why).
-            notes="$(cat <<'NOTES'
-          ## Install on a Mac with Apple silicon
-
-          Run this in Terminal. It downloads this release, checks it against `SHA256SUMS.txt`, and puts PdfCraft in Applications; run it again to update.
-
-          ```sh
-          curl -fsSL https://raw.githubusercontent.com/krichelj/pdfcraft/main/packaging/macos/install.sh | bash
-          ```
-
-          The DMG works too, but these builds aren't notarized by Apple, so macOS blocks a copy downloaded in a browser ("Apple could not verify PdfCraft"). To open it anyway, use System Settings > Privacy & Security > Open Anyway, or run `xattr -dr com.apple.quarantine /Applications/PdfCraft.app`.
-          NOTES
-            )"
-            gh release create "$tag" --draft --title "$title" --target "$GITHUB_SHA" --notes "$notes" --generate-notes "${pre[@]}" -- *
+            # The page's text is the release's record (the version job's Release notes step).
+            gh release create "$tag" --draft --title "$title" --target "$GITHUB_SHA" \
+              --notes-file "$GITHUB_WORKSPACE/notes/release-notes.md" "${pre[@]}" -- *
           fi
           {
             echo "Draft release **$title** at \`${GITHUB_SHA::9}\`:"

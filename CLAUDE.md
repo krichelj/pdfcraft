@@ -36,6 +36,18 @@ environment, which deploys only from the `release` branch.
   - `cargo xtask version set <version>`: Explicit version assignment.
 - **Cargo Invariant**: Root `[workspace.package] version` and all internal `pdfcraft-*` path dependencies in `[workspace.dependencies]` are synchronized simultaneously to ensure `cargo update --workspace` resolves cleanly.
 
+## Fork rule: every release has a record
+**IRONCLAD (owner, 2026-10-16): no fork release ships without `docs/fork/releases/v<version>.md`.**
+The record's "## What changed" is written by hand (what the release means for people using it; a
+`TODO` or an empty list is refused). Its "Exact differences from upstream" part is generated from git
+and is the bookkeeping: the storytold/pdfcraft commit the release is based on, every fork commit since
+the previous fork release, and every file the fork changes relative to that base.
+- In the PR that bumps the version: `cargo xtask fork-notes generate <version>`, write the summary,
+  commit both. Regenerate after any later commit or upstream merge (the summary is kept).
+- CI runs `cargo xtask fork-notes pending` (checks the record of a version not yet tagged); the
+  Release workflow runs `cargo xtask fork-notes body`, which refuses before anything is built and
+  becomes the release page. `xtask/src/workflows.rs` fails if either gate is removed.
+
 ## Machine privacy rule: Zero infrastructure leaks
 **IRONCLAD (owner, 2026-10-10): Machine names, cluster hostnames, and server topology must NEVER appear in public workflows, code, comments, or PRs.**
 - **Anonymous runner labels**: Workflows must specify generic self-hosted labels (`runs-on: [self-hosted, linux]`), never hostnames.

@@ -5,6 +5,7 @@ use std::process::ExitCode;
 mod assets;
 mod corpus;
 mod demo_pdf;
+mod fork_notes;
 mod fuzz;
 mod gates;
 mod layers;
@@ -19,6 +20,11 @@ type Command = fn(&[String]) -> anyhow::Result<()>;
 /// Every subcommand: name, one-line summary, entry point.
 const COMMANDS: &[(&str, &str, Command)] = &[
     ("version", "Workspace version: show, base, set X.Y.Z[-pre], fork [id], or bump-fork [id]", version_cmd),
+    (
+        "fork-notes",
+        "Release notes every fork release must carry: generate <version> | check <version> | pending (docs/fork/releases/)",
+        fork_notes::run,
+    ),
     ("layers", "Enforce the crate dependency layering (plan/architecture.md §3)", gates::layers),
     ("wasm", "cargo check --target wasm32-unknown-unknown for every crate below L8", gates::wasm),
     ("deny", "Dependency licences, bans, sources and advisories (deny.toml; needs cargo-deny)", gates::deny),
