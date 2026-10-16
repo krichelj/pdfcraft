@@ -38,7 +38,7 @@ jobs:
           "$RUNNER_TEMP/actionlint" -color
       - name: shellcheck (macOS packaging)
         run: |
-          shellcheck -x packaging/env.sh packaging/icons.sh packaging/macos/*.sh packaging/macos/dmg/*.sh
+          shellcheck -x packaging/env.sh packaging/icons.sh packaging/macos/*.sh packaging/macos/dmg/*.sh packaging/fork/*.sh
       - name: Property lists
         run: |
           xmllint --noout packaging/macos/*.plist*

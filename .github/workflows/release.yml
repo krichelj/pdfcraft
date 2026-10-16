@@ -1,5 +1,7 @@
-# Release pipeline (fork: macOS Apple Silicon only, see CLAUDE.md): every push to `release` builds and
-# creates or updates the draft GitHub Release "PdfCraft v<version>". See docs/releasing.md.
+# Release pipeline (fork: macOS Apple Silicon only, see CLAUDE.md): a push to main (or `release`)
+# whose version has no tag yet builds the app, publishes "PdfCraft v<version>" with its record
+# (docs/fork/releases) as the notes, and checks the published DMG. A version already released is
+# skipped, so ordinary merges release nothing; Sync upstream bumps the version with every merge.
 #
 # Only the job that drafts the release runs in the `release` environment, whose deployments are
 # restricted to the `release` branch: nothing else can publish, and each draft shows as a
@@ -10,7 +12,7 @@ name: Release
 
 on:
   push:
-    branches: [release]
+    branches: [main, release]
   workflow_dispatch:
     inputs:
       version:
@@ -41,6 +43,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       date: ${{ steps.v.outputs.date }}
       prerelease: ${{ steps.v.outputs.prerelease }}
+      skip: ${{ steps.done.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,11 +71,25 @@ jobs:
       # No release without its record (docs/fork/releases/v<version>.md, CLAUDE.md fork rules): this
       # fails, and nothing is built, when the record is missing, its summary is unwritten, or its
       # generated part no longer matches git. Its text becomes the release page.
+      # A version that already has its tag was released: nothing to build (most pushes to main).
+      - id: done
+        name: Released already?
+        env:
+          V: ${{ steps.v.outputs.version }}
+        run: |
+          if git rev-parse --verify --quiet "refs/tags/v$V" >/dev/null; then
+            echo "::notice::v$V is already released; nothing to build"
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >>"$GITHUB_OUTPUT"
+          fi
       - name: Release notes (docs/fork/releases)
+        if: steps.done.outputs.skip != 'true'
         env:
           V: ${{ steps.v.outputs.version }}
         run: cargo xtask fork-notes body "$V" --commit "$GITHUB_SHA" >"$RUNNER_TEMP/release-notes.md"
       - uses: actions/upload-artifact@v4
+        if: steps.done.outputs.skip != 'true'
         with:
           name: notes
           path: ${{ runner.temp }}/release-notes.md
@@ -83,6 +100,7 @@ jobs:
   macos:
     name: macOS aarch64 (Apple Silicon)
     needs: version
+    if: needs.version.outputs.skip != 'true'
     runs-on: [self-hosted, linux]
     env:
       PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
@@ -124,6 +142,7 @@ jobs:
     name: Draft GitHub Release
     # Fork rule (CLAUDE.md): macOS on Apple Silicon only; other platforms are upstream's.
     needs: [version, macos]
+    if: needs.version.outputs.skip != 'true'
     runs-on: [self-hosted, linux]
     environment:
       name: release
@@ -175,7 +194,31 @@ jobs:
               --notes-file "$GITHUB_WORKSPACE/notes/release-notes.md" "${pre[@]}" -- *
           fi
           {
-            echo "Draft release **$title** at \`${GITHUB_SHA::9}\`:"
+            echo "Release **$title** at \`${GITHUB_SHA::9}\`:"
             echo
             sed 's/^/    /' SHA256SUMS.txt
           } >>"$GITHUB_STEP_SUMMARY"
+      # Published, not left as a draft: the tag is created here, and releases/latest (Help > Check for
+      # updates, install.sh) points at it from now on.
+      - name: Publish
+        run: gh release edit "v$VERSION" --draft=false --latest
+      # The release is only done when the DMG people download from it holds a working app: download
+      # it back from the published release and check the image, the app, its arch and signature.
+      - name: Check the published DMG
+        run: |
+          d="$RUNNER_TEMP/published"
+          rm -rf "$d" && mkdir -p "$d" && cd "$d"
+          gh release download "v$VERSION" -p "pdfcraft-$VERSION-macos-aarch64.dmg" -p SHA256SUMS.txt
+          sha256sum -c --ignore-missing SHA256SUMS.txt
+          for t in dmg hfsplus rcodesign file; do
+            command -v "$t" >/dev/null || { echo "::error::$t missing on the runner: see own-ci-runners"; exit 1; }
+          done
+          dmg extract "pdfcraft-$VERSION-macos-aarch64.dmg" image.hfs >/dev/null
+          hfsplus image.hfs ls / | grep -q ' PdfCraft.app$'
+          hfsplus image.hfs ls / | grep -q ' Applications$'
+          hfsplus image.hfs extract /PdfCraft.app/Contents/MacOS/PdfCraft PdfCraft >/dev/null
+          file PdfCraft | grep -q 'Mach-O 64-bit arm64 executable'
+          rcodesign print-signature-info PdfCraft | grep -q code_directory
+          hfsplus image.hfs extract /PdfCraft.app/Contents/Info.plist Info.plist >/dev/null
+          grep -A1 CFBundleShortVersionString Info.plist | grep -q "<string>$VERSION</string>"
+          echo "Published **PdfCraft v$VERSION**: the DMG holds the arm64, signed PdfCraft $VERSION." >>"$GITHUB_STEP_SUMMARY"
