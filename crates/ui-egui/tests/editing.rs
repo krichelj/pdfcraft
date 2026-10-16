@@ -4239,6 +4239,13 @@ fn image_pixels_follow_the_frame_while_a_corner_is_dragged() {
         }
         let live = frame(&h).expect("the drag shows its frame");
         assert!((live.width() - start.width() * factor).abs() < 1.0, "the frame follows the grip: {live:?} from {start:?}");
+        // The picture's pixels arrive from a worker: on a loaded machine that takes more than the
+        // frames above (CI, 2026-10-16), so wait for them (30 s at most) before checking where.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while pictures(&h).is_empty() && std::time::Instant::now() < deadline {
+            h.run_steps(1);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         let drawn = pictures(&h);
         assert!(
             drawn.iter().any(|b| (b.min - live.min).length() < 0.5 && (b.max - live.max).length() < 0.5),

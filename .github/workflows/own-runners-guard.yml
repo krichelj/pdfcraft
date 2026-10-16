@@ -3,16 +3,19 @@
 # workflow here; the guard itself fails when one is missing.
 name: Own runners guard
 
+# One run per thing to prove: the workflow files when a PR changes them, each other workflow's run
+# once it completes (every job's runner), and the six-hourly audit. The push trigger and the
+# `requested` check were dropped (2026-10-16, owner: no duplicate runs): a PR already checks every
+# workflow file, so a job asking for a hosted machine can't reach main.
 on:
-  push:
-    branches: ['**']
   pull_request:
+    paths: [".github/workflows/**"]
   workflow_dispatch:
   schedule:
     - cron: '23 */6 * * *'
   workflow_run:
     workflows: ["CI", "Packaging lint", "Release", "Sync upstream"]
-    types: [requested, completed]
+    types: [completed]
 
 permissions:
   contents: read
