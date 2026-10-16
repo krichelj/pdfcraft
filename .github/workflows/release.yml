@@ -1,12 +1,11 @@
 # Release pipeline (fork: macOS Apple Silicon only, see CLAUDE.md): every push to `release` builds and
 # creates or updates the draft GitHub Release "PdfCraft v<version>". See docs/releasing.md.
 #
-# The jobs that sign (macOS, Windows) and the one that drafts the release run in the `release`
-# environment (restricted to the `release` branch), which holds the signing secrets. Every secret
-# is optional: missing ones produce unsigned artifacts and a warning, never a failed build. The
-# other jobs use no secrets and so no environment: a dispatch on another branch builds and checks
-# them (a dry run), while the signing jobs are refused there and the draft-release job, which
-# needs them, is skipped.
+# Only the job that drafts the release runs in the `release` environment, whose deployments are
+# restricted to the `release` branch: nothing else can publish, and each draft shows as a
+# deployment. The build jobs use no environment (the macOS one reads the repository secret
+# MACOS_SDKROOT, a path on the runner host), so a dispatch on another branch builds and checks
+# everything (a dry run) and the draft-release job is refused there.
 name: Release
 
 on:
@@ -111,6 +110,9 @@ jobs:
     # Fork rule (CLAUDE.md): macOS on Apple Silicon only; other platforms are upstream's.
     needs: [version, macos]
     runs-on: [self-hosted, linux]
+    environment:
+      name: release
+      url: ${{ github.server_url }}/${{ github.repository }}/releases
     permissions:
       contents: write
     env:
