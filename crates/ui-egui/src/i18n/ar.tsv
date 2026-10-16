@@ -782,6 +782,8 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	يسأل GitHub عن أحدث إصدار. لا يُنزَّل أو يُثبَّت شيء تلقائيًا.
 	Download	تنزيل
 	Later	لاحقًا
+	Install and relaunch	تثبيت وإعادة التشغيل
+	Couldn't start the update: {e}	تعذّر بدء التحديث: {e}
 	none	لا شيء
 	Declared conformance: {shown}	المطابقة المعلنة: {shown}
 	Output intent: {list}	هدف الإخراج: {list}

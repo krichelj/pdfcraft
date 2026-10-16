@@ -416,6 +416,8 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	向 GitHub 搜尋最新版本。不會自動下載或安裝任何內容。
 	Download	下載
 	Later	稍後
+	Install and relaunch	安裝並重新啟動
+	Couldn't start the update: {e}	無法開始更新：{e}
 	none	無
 	Declared conformance: {shown}	宣告的一致性：{shown}
 	Output intent: {list}	輸出意圖：{list}

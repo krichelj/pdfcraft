@@ -857,6 +857,8 @@ key	Space	Mezerník
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	Zjistí na GitHubu nejnovější vydání. Nic se automaticky nestahuje ani neinstaluje.
 	Download	Stáhnout
 	Later	Později
+	Install and relaunch	Nainstalovat a znovu spustit
+	Couldn't start the update: {e}	Aktualizaci nelze spustit: {e}
 	none	žádná
 	Declared conformance: {shown}	Deklarovaná shoda: {shown}
 	Output intent: {list}	Výstupní záměr: {list}

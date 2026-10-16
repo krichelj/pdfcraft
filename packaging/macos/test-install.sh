@@ -38,7 +38,11 @@ f="$STUB_SERVE/${url#https://github.com/krichelj/pdfcraft/releases/download/}"
 [ -f "$f" ] || exit 22
 cp "$f" "$out"'
 stub shasum '[ "$1 $2" = "-a 256" ] || exit 2; sha256sum "$3"'
-stub ditto 'if [ "$1" = -x ]; then mkdir -p "$4"; unzip -q "$3" -d "$4"; else [ "${STUB_DITTO_FAIL:-0}" = 0 ] || exit 1; cp -a "$1" "$2"; fi'
+# ditto copying the new app records it if the app it replaces (STUB_APP_PID) is still running.
+stub ditto 'if [ "$1" = -x ]; then mkdir -p "$4"; unzip -q "$3" -d "$4"; else
+  [ "${STUB_DITTO_FAIL:-0}" = 0 ] || exit 1
+  if [ -n "${STUB_APP_PID:-}" ] && kill -0 "$STUB_APP_PID" 2>/dev/null; then echo "copied while the app ran" >>"$STUB_LOG"; fi
+  cp -a "$1" "$2"; fi'
 stub codesign 'echo "codesign $*" >>"$STUB_LOG"; exit "${STUB_CODESIGN_RC:-0}"'
 stub pgrep 'exit 1'
 for t in osascript xattr open; do stub "$t" "echo \"$t \$*\" >>\"\$STUB_LOG\""; done
@@ -125,6 +129,37 @@ check "  and keeps the old copy" app_says "$T/apps" old
 
 fresh
 check "refuses a release without the macOS zip" run missing refuse "$T/apps" PDFCRAFT_VERSION="9.9.9"
+
+# Install and relaunch: the app starts the installer with its pid, then quits.
+fresh
+sleep 2 &
+app=$!
+check "waits for the app to quit, then swaps and reopens" run relaunch ok "$T/apps" PDFCRAFT_WAIT_PID="$app" STUB_APP_PID="$app" PDFCRAFT_NO_OPEN=0
+check "  never while the app still runs" bash -c "! grep -q 'copied while the app ran' '$T/log'"
+check "  the new app is in place" app_says "$T/apps" new
+check "  and opened" grep -q "^open $T/apps/PdfCraft.app\$" "$T/log"
+check "  without quitting anything itself" bash -c "! grep -q '^osascript' '$T/log'"
+
+fresh
+sleep 30 &
+app=$!
+check "gives up when the app never quits" run stuck refuse "$T/apps" PDFCRAFT_WAIT_PID="$app" PDFCRAFT_WAIT_SECS=1 PDFCRAFT_NO_OPEN=0
+kill "$app" 2>/dev/null || true
+check "  keeps the old copy" app_says "$T/apps" old
+check "  says why in an alert" grep -q '^osascript .*display alert' "$T/log"
+check "  and opens the installed copy again" grep -q "^open $T/apps/PdfCraft.app\$" "$T/log"
+
+fresh
+cp "$SERVE/v$V/$ZIP" "$T/good.zip"
+printf 'x' >>"$SERVE/v$V/$ZIP"
+check "a bad download after Install and relaunch" run relaunch-bad refuse "$T/apps" PDFCRAFT_WAIT_PID=999999999 PDFCRAFT_NO_OPEN=0
+cp "$T/good.zip" "$SERVE/v$V/$ZIP"
+check "  keeps the old copy" app_says "$T/apps" old
+check "  says why in an alert" grep -q '^osascript .*display alert' "$T/log"
+
+fresh
+check "refuses a process id that isn't one" run bad-pid refuse "$T/apps" PDFCRAFT_WAIT_PID="12; rm -rf /"
+check "  and keeps the old copy" app_says "$T/apps" old
 
 echo "install.sh: $pass passed, $fail failed"
 [ "$fail" = 0 ]

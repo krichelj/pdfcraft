@@ -753,6 +753,8 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	A GitHubtól kéri le a legújabb kiadást. Semmi sem töltődik le vagy települ automatikusan.
 	Download	Letöltés
 	Later	Később
+	Install and relaunch	Telepítés és újraindítás
+	Couldn't start the update: {e}	A frissítés indítása nem sikerült: {e}
 	none	nincs
 	Declared conformance: {shown}	Megadott megfelelőség: {shown}
 	Output intent: {list}	Kimeneti cél: {list}

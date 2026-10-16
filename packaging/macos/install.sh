@@ -9,16 +9,34 @@
 # copy installed here opens directly. The download is checked against the release's
 # SHA256SUMS.txt and the app's signature before anything in the Applications folder is replaced.
 #
-# Env: PDFCRAFT_VERSION  a release such as 0.8.0-p1 (default: the latest)
-#      PDFCRAFT_APPS     where PdfCraft.app goes (default: /Applications)
-#      PDFCRAFT_NO_OPEN  set to 1 to not open the app afterwards
+# PdfCraft's Help > Check for updates > Install and relaunch runs the copy inside the app bundle
+# (Contents/Resources/install.sh) with PDFCRAFT_WAIT_PID set to the app's process: everything is
+# downloaded and checked while the app quits, the swap waits until it has, and a failure is shown
+# in an alert and the installed version opened again.
+#
+# Env: PDFCRAFT_VERSION    a release such as 0.8.0-p1 (default: the latest)
+#      PDFCRAFT_APPS       where PdfCraft.app goes (default: /Applications)
+#      PDFCRAFT_NO_OPEN    set to 1 to not open the app afterwards
+#      PDFCRAFT_WAIT_PID   wait for this process to exit instead of quitting PdfCraft
+#      PDFCRAFT_WAIT_SECS  how long to wait for it (default 3600)
 set -euo pipefail
 REPO=krichelj/pdfcraft
 APPS="${PDFCRAFT_APPS:-/Applications}"
+WAIT_PID="${PDFCRAFT_WAIT_PID:-}"
 die() {
   echo "error: $*" >&2
+  if [ -n "$WAIT_PID" ]; then
+    # Started by the app, which is quitting or gone: say why, and bring back what is installed.
+    osascript -e 'on run argv' -e 'display alert "PdfCraft could not update" message (item 1 of argv)' -e 'end run' "$*" \
+      >/dev/null 2>&1 || true
+    if [ "${PDFCRAFT_NO_OPEN:-}" != 1 ] && [ -d "$APPS/PdfCraft.app" ]; then open "$APPS/PdfCraft.app" || true; fi
+  fi
   exit 1
 }
+[ -n "$WAIT_PID" ] && echo "==> $(date -u +%FT%TZ) update started by PdfCraft (pid $WAIT_PID)"
+case "$WAIT_PID" in
+  "" | *[!0-9]*) [ -z "$WAIT_PID" ] || die "PDFCRAFT_WAIT_PID is not a process id: $WAIT_PID" ;;
+esac
 
 [ "$(uname -s)" = Darwin ] || die "this installs the macOS app; run it on a Mac"
 [ "$(uname -m)" = arm64 ] || die "these builds are for Apple silicon (M1 and later), and this Mac is $(uname -m)"
@@ -54,7 +72,15 @@ new="$work/unpacked/PdfCraft.app"
 codesign --verify --strict "$new" || die "the signature of PdfCraft.app in $zip doesn't verify"
 
 # Replace a running copy only once it has quit (it asks about unsaved changes first).
-if pgrep -xq PdfCraft; then
+if [ -n "$WAIT_PID" ]; then
+  echo "==> Waiting for PdfCraft (pid $WAIT_PID) to quit"
+  waited=0
+  while kill -0 "$WAIT_PID" 2>/dev/null; do
+    [ "$waited" -lt "${PDFCRAFT_WAIT_SECS:-3600}" ] || die "PdfCraft didn't quit, so the update to $version wasn't installed"
+    sleep 1
+    waited=$((waited + 1))
+  done
+elif pgrep -xq PdfCraft; then
   echo "==> Quitting PdfCraft"
   osascript -e 'tell application "PdfCraft" to quit' >/dev/null 2>&1 || true
   for _ in $(seq 1 60); do

@@ -780,6 +780,8 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	Запитує в GitHub найновіший випуск. Нічого не завантажується й не встановлюється автоматично.
 	Download	Завантажити
 	Later	Пізніше
+	Install and relaunch	Установити й перезапустити
+	Couldn't start the update: {e}	Не вдалося почати оновлення: {e}
 	none	немає
 	Declared conformance: {shown}	Заявлена відповідність: {shown}
 	Output intent: {list}	Профіль виводу: {list}

@@ -738,6 +738,8 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	En son sürüm için GitHub'ı sorgular. Hiçbir şey otomatik olarak indirilmez veya kurulmaz.
 	Download	İndir
 	Later	Daha sonra
+	Install and relaunch	Yükle ve yeniden başlat
+	Couldn't start the update: {e}	Güncelleme başlatılamadı: {e}
 	none	yok
 	Declared conformance: {shown}	Bildirilen uyumluluk: {shown}
 	Output intent: {list}	Çıktı amacı: {list}

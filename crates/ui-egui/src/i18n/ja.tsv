@@ -783,6 +783,8 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	GitHub で最新リリースを確認します。自動でダウンロードやインストールは行いません。
 	Download	ダウンロード
 	Later	後で
+	Install and relaunch	インストールして再起動
+	Couldn't start the update: {e}	アップデートを開始できませんでした: {e}
 	none	なし
 	Declared conformance: {shown}	宣言された準拠規格: {shown}
 	Output intent: {list}	出力インテント: {list}

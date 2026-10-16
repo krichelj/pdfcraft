@@ -779,6 +779,8 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	Chiede a GitHub qual è l'ultima versione. Nulla viene scaricato o installato automaticamente.
 	Download	Scarica
 	Later	Più tardi
+	Install and relaunch	Installa e riavvia
+	Couldn't start the update: {e}	Impossibile avviare l'aggiornamento: {e}
 	none	nessuno
 	Declared conformance: {shown}	Conformità dichiarata: {shown}
 	Output intent: {list}	Output intent: {list}

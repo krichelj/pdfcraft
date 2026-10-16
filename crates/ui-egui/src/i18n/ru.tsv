@@ -776,6 +776,8 @@
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	Запрашивает у GitHub последний релиз. Ничего не скачивается и не устанавливается автоматически.
 	Download	Скачать
 	Later	Позже
+	Install and relaunch	Установить и перезапустить
+	Couldn't start the update: {e}	Не удалось начать обновление: {e}
 	none	нет
 	Declared conformance: {shown}	Заявленное соответствие: {shown}
 	Output intent: {list}	Выходное намерение: {list}
