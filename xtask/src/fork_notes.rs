@@ -2,11 +2,10 @@
 //! release (`<base>-p<N>`, CLAUDE.md fork rules) carries in `docs/fork/releases/v<version>.md`.
 //!
 //! A record has two parts. "What changed" is written by hand and says what the release means for
-//! people using it. "Exact differences from upstream" is generated from git and is the bookkeeping:
-//! the storytold/pdfcraft commit the release is based on, every fork commit since the previous
-//! fork release (upstream's own commits excluded), and every file the fork changes relative to that
-//! upstream base. `check` regenerates the second part and refuses the release when the file is
-//! missing, the summary is empty or still a TODO, or the generated part no longer matches git.
+//! people using it. "Based on" is generated from git and is the bookkeeping:
+//! the storytold/pdfcraft commit and version the release is based on, and the previous fork release.
+//! `check` regenerates the second part and refuses the release when the file is missing, the summary
+//! is empty or still a TODO, or the generated part no longer matches git (an upstream merge since).
 //! The Release workflow runs `body` (a `check`, then the release page's text) before it builds; CI
 //! runs `pending` on every change, which checks the record of a version not released yet.
 //!
@@ -28,9 +27,6 @@ const START: &str = "<!-- fork-notes:generated:start (cargo xtask fork-notes gen
 const END: &str = "<!-- fork-notes:generated:end -->";
 const SUMMARY: &str = "## What changed";
 const PLACEHOLDER: &str = "TODO";
-/// The records themselves: left out of what they describe, so committing one (or GitHub's merge
-/// commit for its PR) doesn't make it out of date.
-const RECORDS: &str = ":(exclude)docs/fork/releases";
 /// On every release page, between the summary and the generated part.
 const INSTALL: &str = r#"## Install on a Mac with Apple silicon
 
@@ -57,11 +53,6 @@ pub struct Delta {
     pub upstream_version: String,
     /// The latest earlier fork release tag (`v<version>`) the commit contains.
     pub previous: Option<String>,
-    /// Fork-only commits since `previous` (all of them when there is none), apart from ones that
-    /// only touch the records: (full hash, subject).
-    pub commits: Vec<(String, String)>,
-    /// Files that differ from the upstream base: (path, added, removed); `None` for binary files.
-    pub files: Vec<(String, Option<u64>, Option<u64>)>,
 }
 
 pub fn run(args: &[String]) -> anyhow::Result<()> {
@@ -98,10 +89,9 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
             let delta = collect(&repo, &normalize(v)?, &commit, &upstream()?)?;
             let path = generate(&repo, &delta)?;
             println!(
-                "fork-notes: wrote {} ({} fork commits, {} files vs upstream {}); write \"{SUMMARY}\" before releasing",
+                "fork-notes: wrote {} (upstream {} at {}); write \"{SUMMARY}\" before releasing",
                 path.display(),
-                delta.commits.len(),
-                delta.files.len(),
+                delta.upstream_version,
                 short(&delta.upstream_base)
             );
             Ok(())
@@ -185,31 +175,12 @@ pub fn collect(repo: &Path, version: &str, commit: &str, upstream: &str) -> anyh
         .filter_map(|t| key(t).filter(|k| *k < this && k.3 > 0).map(|k| (k, t.to_string())))
         .max()
         .map(|(_, t)| t);
-    let mut range = vec!["log", "--no-merges", "--topo-order", "--reverse", "--format=%H%x09%s", &commit, "--not", &upstream];
-    if let Some(p) = &previous {
-        range.push(p);
-    }
-    range.extend(["--", ".", RECORDS]);
-    let commits = git(repo, &range)?.lines().filter_map(|l| l.split_once('\t')).map(|(h, s)| (h.to_string(), s.to_string())).collect();
-    let files = git(repo, &["diff", "--numstat", "--no-renames", &upstream_base, &commit, "--", ".", RECORDS])?
-        .lines()
-        .filter_map(|l| {
-            let mut f = l.splitn(3, '\t');
-            let (a, r, p) = (f.next()?, f.next()?, f.next()?);
-            Some((p.to_string(), a.parse().ok(), r.parse().ok()))
-        })
-        .collect();
-    Ok(Delta { version: version.to_string(), upstream_base, upstream_version, previous, commits, files })
-}
-
-/// A Markdown table cell: pipes escaped, line breaks folded.
-fn cell(s: &str) -> String {
-    s.replace('|', "\\|").replace(['\n', '\r'], " ")
+    Ok(Delta { version: version.to_string(), upstream_base, upstream_version, previous })
 }
 
 /// The generated part of the record, markers included.
 pub fn render(d: &Delta) -> String {
-    let mut s = format!("{START}\n## Exact differences from upstream\n\n");
+    let mut s = format!("{START}\n## Based on\n\n");
     s += &format!(
         "- **Upstream base:** [storytold/pdfcraft@{}]({UPSTREAM_WEB}/commit/{}), upstream version {}.\n",
         short(&d.upstream_base),
@@ -218,29 +189,7 @@ pub fn render(d: &Delta) -> String {
     );
     match &d.previous {
         Some(p) => s += &format!("- **Previous fork release:** [{p}]({FORK_WEB}/releases/tag/{p}).\n"),
-        None => s += "- **Previous fork release:** none; the commits below are every fork commit to date.\n",
-    }
-    let since = d.previous.as_deref().map_or_else(|| "since the fork began".to_string(), |p| format!("since {p}"));
-    s += &format!("\n### Fork commits in this release ({}, {since}; upstream's own commits excluded)\n\n", d.commits.len());
-    if d.commits.is_empty() {
-        s += "None.\n";
-    } else {
-        s += "| Commit | Change |\n|---|---|\n";
-        for (h, subject) in &d.commits {
-            s += &format!("| [`{}`]({FORK_WEB}/commit/{h}) | {} |\n", short(h), cell(subject));
-        }
-    }
-    let added: u64 = d.files.iter().filter_map(|f| f.1).sum();
-    let removed: u64 = d.files.iter().filter_map(|f| f.2).sum();
-    s += &format!("\n### Every file this fork changes relative to upstream ({} files, +{added} -{removed})\n\n", d.files.len());
-    if d.files.is_empty() {
-        s += "None.\n";
-    } else {
-        s += "| File | + | - |\n|---|---:|---:|\n";
-        for (path, a, r) in &d.files {
-            let n = |x: &Option<u64>| x.map_or_else(|| "binary".to_string(), |v| v.to_string());
-            s += &format!("| `{}` | {} | {} |\n", cell(path), n(a), n(r));
-        }
+        None => s += "- **Previous fork release:** none; this is the first published fork release.\n",
     }
     s += END;
     s += "\n";
@@ -314,7 +263,7 @@ fn check_text(text: &str, d: &Delta) -> anyhow::Result<()> {
     ensure!(items > 0, "\"{SUMMARY}\" lists no changes (one `- ` line per change)");
     ensure!(
         generated == render(d),
-        "the generated part doesn't match git (new commits, or a different upstream base): run `cargo xtask fork-notes generate {}`",
+        "the generated part doesn't match git (an upstream merge or a new release since): run `cargo xtask fork-notes generate {}`",
         d.version
     );
     Ok(())
@@ -325,14 +274,7 @@ mod tests {
     use super::*;
 
     fn delta() -> Delta {
-        Delta {
-            version: "0.8.0-p2".into(),
-            upstream_base: "2".repeat(40),
-            upstream_version: "0.8.0".into(),
-            previous: Some("v0.8.0-p1".into()),
-            commits: vec![("3".repeat(40), "Fork: a | b".into())],
-            files: vec![("a.rs".into(), Some(3), Some(1)), ("i.png".into(), None, None)],
-        }
+        Delta { version: "0.8.0-p2".into(), upstream_base: "2".repeat(40), upstream_version: "0.8.0".into(), previous: Some("v0.8.0-p1".into()) }
     }
 
     fn written(d: &Delta, summary: &str) -> String {
@@ -362,15 +304,15 @@ mod tests {
     }
 
     #[test]
-    fn the_generated_part_lists_base_commits_and_files() {
+    fn the_generated_part_names_the_upstream_base_and_the_previous_release() {
         let r = render(&delta());
         assert!(r.starts_with(START) && r.trim_end().ends_with(END));
         assert!(r.contains("storytold/pdfcraft@222222222222"), "{r}");
         assert!(r.contains("upstream version 0.8.0"));
         assert!(r.contains("[v0.8.0-p1](https://github.com/krichelj/pdfcraft/releases/tag/v0.8.0-p1)"));
-        assert!(r.contains("| Fork: a \\| b |"), "pipes are escaped: {r}");
-        assert!(r.contains("(2 files, +3 -1)"));
-        assert!(r.contains("| `i.png` | binary | binary |"));
+        assert!(!r.contains("###"), "no commit or file tables: {r}");
+        let first = Delta { previous: None, ..delta() };
+        assert!(render(&first).contains("none; this is the first published fork release"));
     }
 
     #[test]
@@ -385,10 +327,9 @@ mod tests {
         assert!(check_text(&good.replace(SUMMARY, "## Changes"), &d).is_err(), "the section is required by name");
         assert!(check_text(&good.replace("# PdfCraft 0.8.0-p2", "# PdfCraft 0.8.0-p1"), &d).is_err(), "the title names the version");
         // The generated part must be what git says now.
-        let mut newer = d.clone();
-        newer.commits.push(("4".repeat(40), "Fork: one more".into()));
-        assert!(check_text(&good, &newer).unwrap_err().to_string().contains("doesn't match git"));
-        let edited = good.replace("| `a.rs` | 3 | 1 |", "| `a.rs` | 3 | 0 |");
+        let rebased = Delta { upstream_base: "4".repeat(40), ..d.clone() };
+        assert!(check_text(&good, &rebased).unwrap_err().to_string().contains("doesn't match git"));
+        let edited = good.replace("upstream version 0.8.0.", "upstream version 0.7.0.");
         assert!(check_text(&edited, &d).is_err(), "hand edits to the generated part are refused");
         assert!(check_text(&good.replace(END, ""), &d).is_err(), "markers are required");
     }
@@ -439,23 +380,19 @@ mod tests {
     }
 
     #[test]
-    fn git_gives_the_base_the_fork_commits_since_the_last_release_and_the_files() {
+    fn git_gives_the_upstream_base_and_the_previous_release() {
         let r = repo("collect");
         let d = collect(&r.0, "0.1.0-p2", "HEAD", "upstream").unwrap();
         assert_eq!(d.upstream_base, r.git(&["rev-parse", "upstream"]).trim(), "the upstream commit merged last");
         assert_eq!(d.upstream_version, "0.1.0");
         assert_eq!(d.previous.as_deref(), Some("v0.1.0-p1"));
-        let subjects: Vec<&str> = d.commits.iter().map(|c| c.1.as_str()).collect();
-        assert_eq!(subjects, ["Fork: installer"], "upstream's commits and the merge are not fork changes");
-        let files: Vec<&str> = d.files.iter().map(|f| f.0.as_str()).collect();
-        assert_eq!(files, ["Cargo.toml", "fork.rs"], "everything the fork changes vs the base");
         let first = collect(&r.0, "0.1.0-p1", "v0.1.0-p1", "upstream").unwrap();
         assert_eq!(first.previous, None);
-        assert_eq!(first.commits.len(), 1, "the first release lists every fork commit");
+        assert_ne!(first.upstream_base, d.upstream_base, "p1 came before the later upstream merge");
     }
 
     #[test]
-    fn generate_then_check_and_a_later_commit_makes_it_stale() {
+    fn generate_then_check_and_an_upstream_merge_makes_it_stale() {
         let r = repo("roundtrip");
         let d = collect(&r.0, "0.1.0-p2", "HEAD", "upstream").unwrap();
         let path = generate(&r.0, &d).unwrap();
@@ -464,18 +401,23 @@ mod tests {
         let text = text.replace(&format!("- {PLACEHOLDER}: what this release changes for people using it, one line per change."), "- The installer.");
         std::fs::write(&path, &text).unwrap();
         check(&r.0, &d).unwrap();
-        // Committing the record, and merging its branch, leave it current.
+        // Committing the record, merging its branch and further fork commits leave it current.
         r.git(&["checkout", "-q", "-b", "notes"]);
         r.git(&["add", "docs"]);
         r.git(&["commit", "-q", "-m", "Fork: notes for 0.1.0-p2"]);
         r.git(&["checkout", "-q", "main"]);
         r.git(&["merge", "-q", "--no-ff", "--no-edit", "notes"]);
-        check(&r.0, &collect(&r.0, "0.1.0-p2", "HEAD", "upstream").unwrap()).unwrap();
         r.commit("fork2.rs", "g", "Fork: another change");
-        let later = collect(&r.0, "0.1.0-p2", "HEAD", "upstream").unwrap();
-        assert!(check(&r.0, &later).is_err(), "a commit after the notes were generated");
-        generate(&r.0, &later).unwrap();
-        check(&r.0, &later).unwrap();
+        check(&r.0, &collect(&r.0, "0.1.0-p2", "HEAD", "upstream").unwrap()).unwrap();
+        // Merging newer upstream work moves the base: the record must be regenerated.
+        r.git(&["checkout", "-q", "upstream"]);
+        r.commit("up.rs", "3", "upstream: even later");
+        r.git(&["checkout", "-q", "main"]);
+        r.git(&["merge", "-q", "--no-edit", "upstream"]);
+        let merged = collect(&r.0, "0.1.0-p2", "HEAD", "upstream").unwrap();
+        assert!(check(&r.0, &merged).is_err(), "an upstream merge after the notes were generated");
+        generate(&r.0, &merged).unwrap();
+        check(&r.0, &merged).unwrap();
         assert!(std::fs::read_to_string(&path).unwrap().contains("- The installer."), "regenerating keeps the summary");
         assert!(check(&r.0, &collect(&r.0, "0.1.0-p3", "HEAD", "upstream").unwrap()).is_err(), "no record for another version");
     }

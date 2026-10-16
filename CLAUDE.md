@@ -39,11 +39,11 @@ environment, which deploys only from the `release` branch.
 ## Fork rule: every release has a record
 **IRONCLAD (owner, 2026-10-16): no fork release ships without `docs/fork/releases/v<version>.md`.**
 The record's "## What changed" is written by hand (what the release means for people using it; a
-`TODO` or an empty list is refused). Its "Exact differences from upstream" part is generated from git
-and is the bookkeeping: the storytold/pdfcraft commit the release is based on, every fork commit since
-the previous fork release, and every file the fork changes relative to that base.
+`TODO` or an empty list is refused). Its "Based on" part is generated from git
+and is the bookkeeping: the storytold/pdfcraft commit and version the release is based on, and the
+previous fork release.
 - In the PR that bumps the version: `cargo xtask fork-notes generate <version>`, write the summary,
-  commit both. Regenerate after any later commit or upstream merge (the summary is kept).
+  commit both. Regenerate after an upstream merge (the summary is kept).
 - CI runs `cargo xtask fork-notes pending` (checks the record of a version not yet tagged); the
   Release workflow runs `cargo xtask fork-notes body`, which refuses before anything is built and
   becomes the release page. `xtask/src/workflows.rs` fails if either gate is removed.
