@@ -28,7 +28,7 @@ jobs:
       - name: Install tools
         run: |
           # own-ci-runners: jobs never sudo; the owner installs host packages, the job checks them.
-          for t in shellcheck xmllint; do
+          for t in shellcheck xmllint zip unzip sha256sum; do
             command -v "$t" >/dev/null || { echo "::error::$t missing on the runner: see own-ci-runners"; exit 1; }
           done
           curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
@@ -42,3 +42,5 @@ jobs:
       - name: Property lists
         run: |
           xmllint --noout packaging/macos/*.plist*
+      - name: Installer (install.sh against stand-in macOS tools)
+        run: packaging/macos/test-install.sh
