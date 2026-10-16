@@ -12,7 +12,10 @@ Linux, Flatpak, FreeBSD and Web packaging stay exactly as upstream (storytold/pd
 do not edit, fix, build or run them here, and take upstream's versions on every merge. The fork's
 `release.yml` runs only `version`, `macos` and `release`, on the own Linux runners
 (own-ci-runners), cross-building with `packaging/macos/cross-package.sh`. Shared code and its tests
-(`ci.yml`) still run, because the Mac app is built from them.
+(`ci.yml`) still run, because the Mac app is built from them; CI/CD runs no other non-Mac check (no
+wasm32/web, Windows, Linux-desktop or Flatpak lint), and `packaging-lint.yml` covers only the macOS
+packaging scripts and property lists. The `Draft GitHub Release` job runs in the `release`
+environment, which deploys only from the `release` branch.
 
 ## Fork rule: Always sync upstream on every commit
 **IRONCLAD (owner, 2026-10-10): Always update from upstream (`git fetch upstream && git merge upstream/main`) every time you commit in this repo.** Because this repository is an active fork, it must stay continually aligned with upstream (`storytold/pdfcraft:main`). Never commit or push changes against a stale upstream base. On every commit:
