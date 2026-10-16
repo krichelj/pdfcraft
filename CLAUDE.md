@@ -25,6 +25,19 @@ environment, which deploys only from the `release` branch.
 3. Verify quality gates: `cargo check --all-targets && cargo xtask assets`.
 4. Push to `origin main`.
 
+## Fork rule: upstream syncs and releases run themselves
+- **Sync upstream** (`.github/workflows/sync-upstream.yml`, daily 06:00 UTC and on demand) runs
+  `packaging/fork/sync-upstream.sh`. It merges storytold/pdfcraft main on a `sync/upstream-<sha>`
+  branch, keeps only the fork's workflows, bumps the version (`<base>-p<N+1>`, or `<new base>-p1`)
+  and writes the release record listing the upstream commits. It then opens the PR, waits for its
+  checks (CI's `test (shared code)` must pass) and merges it, which deletes the branch. Conflicts
+  outside Cargo.toml/Cargo.lock stop it for a person.
+- It uses the owner's gh login on the runner host: the workflow token can't push workflow files,
+  and its pushes start no workflows.
+- **Release** runs on every push to main. A version that is already tagged is skipped. Otherwise it
+  builds, publishes "PdfCraft v<version>" with the record as notes, then downloads the published DMG
+  back and checks it: the app, the Applications link, arm64, the signature and the version.
+
 ## Fork rule: Orthogonal fork versioning (`<upstream>-p<N>`)
 **IRONCLAD (owner, 2026-10-10): All releases and builds in this fork must use an orthogonal downstream patchlevel tag extending upstream's base version.**
 - **Format**: `<base>-p<N>` (e.g. `0.6.0-p1`, `0.6.0-p2`). Follows standard open-source patchlevel conventions and SemVer 2.0.0 Rule 9 without personal developer handles.

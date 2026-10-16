@@ -4,12 +4,17 @@
 #[cfg(test)]
 mod tests {
     const CI: &str = include_str!("../../.github/workflows/ci.yml");
-    const ALL: [(&str, &str); 4] = [
+    const ALL: [(&str, &str); 5] = [
         ("ci.yml", CI),
         ("release.yml", include_str!("../../.github/workflows/release.yml")),
         ("packaging-lint.yml", include_str!("../../.github/workflows/packaging-lint.yml")),
         ("own-runners-guard.yml", include_str!("../../.github/workflows/own-runners-guard.yml")),
+        ("sync-upstream.yml", include_str!("../../.github/workflows/sync-upstream.yml")),
     ];
+
+    fn file(name: &str) -> &'static str {
+        ALL.iter().find(|(f, _)| *f == name).map(|(_, t)| *t).unwrap_or_else(|| panic!("{name} is in ALL"))
+    }
 
     /// The jobs of a workflow as (name, text), split at the two-space keys under `jobs:`.
     fn jobs(workflow: &str) -> Vec<(String, String)> {
@@ -97,6 +102,39 @@ mod tests {
         let test = jobs(CI).into_iter().find(|(n, _)| n == "test").expect("ci.yml test job").1;
         assert!(test.contains("cargo xtask fork-notes pending"), "a bump's PR is checked too");
         assert!(test.contains("fetch-depth: 0"));
+    }
+
+    #[test]
+    fn upstream_is_synced_daily_and_merged_through_a_checked_pr() {
+        let sync = file("sync-upstream.yml");
+        assert!(sync.contains("schedule:") && sync.contains("cron: \"0 6 * * *\""), "every day");
+        assert!(sync.contains("workflow_dispatch:"));
+        assert!(sync.contains("run: packaging/fork/sync-upstream.sh"));
+        assert!(sync.contains("persist-credentials: false"), "never pushes with the workflow's token");
+        let script = include_str!("../../packaging/fork/sync-upstream.sh");
+        assert!(script.contains("gh pr create") && script.contains("gh pr merge \"$pr\" --repo \"$REPO\" --merge --delete-branch"));
+        assert!(script.contains(".name == \"test (shared code)\" and .conclusion == \"success\""), "merges only after CI's tests passed");
+        assert!(script.contains("cargo xtask fork-notes check"), "and with its release record");
+        let guard = file("own-runners-guard.yml");
+        assert!(guard.contains("\"Sync upstream\""), "the guard watches it");
+    }
+
+    #[test]
+    fn a_push_to_main_publishes_an_unreleased_version_and_checks_its_dmg() {
+        let release = file("release.yml");
+        assert!(release.contains("branches: [main, release]"));
+        let version = jobs(release).into_iter().find(|(n, _)| n == "version").expect("a version job").1;
+        assert!(version.contains("refs/tags/v$V") && version.contains("skip=true"), "a released version is skipped");
+        for job in ["macos", "release"] {
+            let j = jobs(release).into_iter().find(|(n, _)| n == job).expect(job).1;
+            assert!(j.contains("if: needs.version.outputs.skip != 'true'"), "{job} skips released versions");
+        }
+        let draft = jobs(release).into_iter().find(|(n, _)| n == "release").expect("release job").1;
+        assert!(draft.contains("gh release edit \"v$VERSION\" --draft=false --latest"), "published, not left a draft");
+        let check = draft.split("name: Check the published DMG").nth(1).expect("a published-DMG check");
+        for must in ["gh release download", "sha256sum -c", "Mach-O 64-bit arm64 executable", "code_directory", " Applications$"] {
+            assert!(check.contains(must), "the published DMG check covers {must}");
+        }
     }
 
     #[test]

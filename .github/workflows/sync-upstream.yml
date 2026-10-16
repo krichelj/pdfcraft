@@ -1,0 +1,38 @@
+# Every day: bring storytold/pdfcraft's new commits into the fork through a PR, and merge it once its
+# checks pass (packaging/fork/sync-upstream.sh). The merge is a push to main, which starts Release:
+# it builds the macOS app and publishes it, with the release record as its notes (release.yml).
+#
+# The script pushes, opens and merges with the owner's gh login on the runner host (own-ci-runners):
+# a commit made with this workflow's own token can't change workflow files, which upstream merges
+# often do, and its pushes and PRs start no other workflow, so CI and Release would never run.
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: sync upstream
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The sync pushes with the owner's login, never this workflow's token.
+          persist-credentials: false
+      - name: Check the owner's gh login
+        run: |
+          gh auth status 2>&1 | grep -q 'workflow' \
+            || { echo "::error::the runner host's gh login lacks the workflow scope: see own-ci-runners"; exit 1; }
+      - name: Sync storytold/pdfcraft main
+        run: packaging/fork/sync-upstream.sh

@@ -230,16 +230,25 @@ enum Outcome {
 /// instead of exhausting the machine: on CI that killed the runner and lost the findings.
 const CHILD_ADDRESS_SPACE_KIB: u64 = 4 * 1024 * 1024;
 
+/// Rayon threads in each child (see `child_command`).
+const CHILD_RAYON_THREADS: &str = "2";
+
 /// The child process, under the address-space cap where the shell can set one (Linux and
 /// FreeBSD; macOS does not support `ulimit -v` and Windows has no `sh`).
 fn child_command(exe: &Path) -> Command {
-    if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+    let mut c = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
         let mut c = Command::new("sh");
         c.args(["-c", &format!("ulimit -v {CHILD_ADDRESS_SPACE_KIB} && exec \"$0\" \"$@\"")]).arg(exe);
         c
     } else {
         Command::new(exe)
-    }
+    };
+    // The jobs run side by side, so each child gets a small rayon pool whatever the environment
+    // says: with CI's RAYON_NUM_THREADS (90% of the host's threads) every child started hundreds
+    // of threads, whose stacks overran the address-space cap, and all 48 findings of a nightly run
+    // were rayon failing to start its pool, not PdfCraft crashing.
+    c.env("RAYON_NUM_THREADS", CHILD_RAYON_THREADS);
+    c
 }
 
 fn run_one(exe: &Path, file: &Path, timeout: Duration) -> (Outcome, String) {
@@ -426,4 +435,17 @@ pub fn run(args: &[String]) -> Result<()> {
 
 fn fxhash(b: &[u8]) -> u64 {
     b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, x| (h ^ u64::from(*x)).wrapping_mul(0x100_0000_01b3))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_child_runs_a_small_rayon_pool_whatever_the_job_says() {
+        let c = child_command(Path::new("/bin/true"));
+        let rayon: Vec<_> = c.get_envs().filter(|(k, _)| *k == "RAYON_NUM_THREADS").map(|(_, v)| v).collect();
+        assert_eq!(rayon, [Some(std::ffi::OsStr::new(CHILD_RAYON_THREADS))], "set on the child itself, overriding CI's value");
+        assert!(CHILD_RAYON_THREADS.parse::<usize>().is_ok_and(|n| (1..=4).contains(&n)));
+    }
 }

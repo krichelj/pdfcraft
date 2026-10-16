@@ -138,13 +138,11 @@ jobs:
         run: |
           NPROC=$(nproc)
           JOBS=$(( NPROC * 9 / 10 ))
-          # Builds stop at BUILD_JOBS_CAP, as in the test job (no faster past 64 jobs).
+          # Builds stop at BUILD_JOBS_CAP, as in the test job (no faster past 64 jobs). No
+          # RAYON_NUM_THREADS here: the fuzzer runs JOBS children and gives each its own small pool.
           BUILD_JOBS_CAP=64
           BUILD_JOBS=$(( JOBS < BUILD_JOBS_CAP ? JOBS : BUILD_JOBS_CAP ))
-          {
-            echo "CARGO_BUILD_JOBS=${BUILD_JOBS}"
-            echo "RAYON_NUM_THREADS=${JOBS}"
-          } >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_JOBS=${BUILD_JOBS}" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
