@@ -11,8 +11,9 @@ use egui::{Align, Layout};
 
 use crate::{PdfCraftApp, theme, widgets};
 
-/// Where every PdfCraft release is listed.
-pub const RELEASES_PAGE: &str = "https://github.com/storytold/pdfcraft/releases";
+/// Where every PdfCraft release is listed: this fork's (krichelj/pdfcraft), whose macOS Apple
+/// Silicon builds are the ones this app updates to (CLAUDE.md, fork rules).
+pub const RELEASES_PAGE: &str = "https://github.com/krichelj/pdfcraft/releases";
 
 /// The latest published release.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,21 +28,28 @@ pub struct Release {
 pub type UpdateSource = Arc<dyn Fn() -> Result<Release, String> + Send + Sync>;
 
 /// Whether release `latest` (a tag such as `v0.2.0`) is newer than version `current` (`0.1.1`).
-/// Pre-release and build suffixes are ignored; a version that doesn't parse is never newer.
+/// Pre-release and build suffixes are ignored, except the fork's patchlevel `-p<N>`: `0.8.0-p2`
+/// is newer than `0.8.0-p1`, which is newer than `0.8.0`. A version that doesn't parse is never
+/// newer.
 pub fn is_newer(latest: &str, current: &str) -> bool {
     matches!((parse(latest), parse(current)), (Some(l), Some(c)) if l > c)
 }
 
-fn parse(v: &str) -> Option<(u64, u64, u64)> {
+fn parse(v: &str) -> Option<(u64, u64, u64, u64)> {
     let v = v.trim().trim_start_matches(['v', 'V']);
-    let core = v.split(['-', '+']).next()?;
+    let v = v.split('+').next()?;
+    let (core, suffix) = v.split_once('-').unwrap_or((v, ""));
+    let patchlevel = match suffix.strip_prefix('p') {
+        Some(n) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => n.parse::<u64>().ok()?,
+        _ => 0,
+    };
     let mut parts = core.split('.');
     let mut next = |required: bool| match parts.next() {
         Some(p) => p.parse::<u64>().ok(),
         None if required => None,
         None => Some(0),
     };
-    let version = (next(true)?, next(false)?, next(false)?);
+    let version = (next(true)?, next(false)?, next(false)?, patchlevel);
     parts.next().is_none().then_some(version)
 }
 

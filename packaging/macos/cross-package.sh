@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Cross-build the Apple Silicon (M1 and later) macOS artifacts on a Linux host:
 #
+#   $DIST/pdfcraft-<version>-macos-aarch64.dmg       PdfCraft.app on a drag-to-Applications DMG
 #   $DIST/pdfcraft-<version>-macos-aarch64.zip       PdfCraft.app, ad-hoc signed
 #   $DIST/pdfcraft-cli-<version>-macos-aarch64.zip   the headless CLI
 #
 # The fork's runners are Linux only, so this replaces package.sh there: zig links against a macOS
-# SDK copied from the owner's Xcode, rcodesign signs ad-hoc. No DMG and no notarization (hdiutil
-# and notarytool are macOS-only); macOS asks once on first open (right-click > Open).
+# SDK copied from the owner's Xcode, rcodesign signs ad-hoc, and dmg/make-dmg.sh writes the DMG
+# (shared with package.sh). No notarization (notarytool is macOS-only); macOS asks once on first open.
 #
 # Needs (env): MACOS_SDKROOT (a MacOSX*.sdk directory). Tools on PATH: zig, cargo-zigbuild,
-# rcodesign, zip; the aarch64-apple-darwin Rust target.
+# rcodesign, zip, and make-dmg.sh's mkfs.hfsplus, hfsplus, dmg; the aarch64-apple-darwin Rust target.
 set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
@@ -37,6 +38,7 @@ SHORT_VERSION="${VERSION%%-*}"
 WORK="$CARGO_TARGET_DIR/macos-cross-package"
 APP="$WORK/PdfCraft.app"
 APP_ZIP="$DIST/pdfcraft-$VERSION-macos-aarch64.zip"
+DMG="$DIST/pdfcraft-$VERSION-macos-aarch64.dmg"
 CLI_ZIP="$DIST/pdfcraft-cli-$VERSION-macos-aarch64.zip"
 
 echo "==> PdfCraft $VERSION for macOS ($TARGET), cross-built on $(hostname)"
@@ -62,6 +64,8 @@ rcodesign print-signature-info "$APP/Contents/MacOS/PdfCraft" | grep -q "code_di
 rm -f "$APP_ZIP"
 (cd "$WORK" && zip -qry "$APP_ZIP" PdfCraft.app)
 
+"$HERE/dmg/make-dmg.sh" "$APP" "$DMG" "$WORK"
+
 CLI_DIR="$WORK/pdfcraft-cli-$VERSION-macos-aarch64"
 mkdir -p "$CLI_DIR"
 cp "$BIN/pdfcraft-cli" "$CLI_DIR/"
@@ -69,4 +73,4 @@ copy_docs "$CLI_DIR"
 rcodesign sign --code-signature-flags runtime "$CLI_DIR/pdfcraft-cli"
 rm -f "$CLI_ZIP"
 (cd "$WORK" && zip -qry "$CLI_ZIP" "$(basename "$CLI_DIR")")
-ls -l "$APP_ZIP" "$CLI_ZIP"
+ls -l "$DMG" "$APP_ZIP" "$CLI_ZIP"

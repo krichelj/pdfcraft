@@ -9,7 +9,7 @@ use pdfcraft_ui_egui::updates::{Release, UpdateSource, is_newer};
 
 fn source(answer: Result<&str, &str>) -> UpdateSource {
     let answer = answer.map(str::to_string).map_err(str::to_string);
-    Arc::new(move || answer.clone().map(|v| Release { url: format!("https://github.com/storytold/pdfcraft/releases/tag/{v}"), version: v }))
+    Arc::new(move || answer.clone().map(|v| Release { url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{v}"), version: v }))
 }
 
 fn harness(answer: Result<&str, &str>) -> Harness<'static, PdfCraftApp> {
@@ -48,6 +48,15 @@ fn versions_compare_by_number() {
     assert!(!is_newer("nightly", "0.1.1"), "a tag that isn't a version is never newer");
     assert!(!is_newer("v1.2.3.4", "0.1.1"));
     assert!(!is_newer("v99999999999999999999.0.0", "0.1.1"), "out of range");
+    // The fork's patchlevel `-p<N>` counts; other suffixes still don't.
+    assert!(is_newer("v0.8.0-p2", "0.8.0-p1"));
+    assert!(is_newer("v0.8.0-p10", "0.8.0-p9"));
+    assert!(is_newer("v0.8.0-p1", "0.8.0"));
+    assert!(is_newer("v0.9.0", "0.8.0-p7"));
+    assert!(!is_newer("v0.8.0-p1", "0.8.0-p1"));
+    assert!(!is_newer("v0.8.0", "0.8.0-p1"));
+    assert!(!is_newer("v0.8.0-preview", "0.8.0"), "not a patchlevel");
+    assert!(!is_newer("v0.8.0-p99999999999999999999", "0.8.0"), "patchlevel out of range");
 }
 
 #[test]
@@ -89,7 +98,7 @@ fn nothing_is_asked_until_the_user_checks() {
         let counted = counted.clone();
         app.update_source = Some(Arc::new(move || {
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/storytold/pdfcraft/releases/tag/v99.0.0".into() })
+            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/krichelj/pdfcraft/releases/tag/v99.0.0".into() })
         }));
         app
     });
