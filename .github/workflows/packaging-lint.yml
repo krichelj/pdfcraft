@@ -3,10 +3,8 @@
 # Linux desktop/AppStream or Flatpak checks.
 name: Packaging lint
 
+# Once per change, on its PR.
 on:
-  push:
-    branches: [main, release]
-    paths: [".github/workflows/**", "packaging/**", "assets/app-icon/**"]
   pull_request:
     paths: [".github/workflows/**", "packaging/**", "assets/app-icon/**"]
   workflow_dispatch:

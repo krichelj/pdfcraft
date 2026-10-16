@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn a_push_to_main_publishes_an_unreleased_version_and_checks_its_dmg() {
         let release = file("release.yml");
-        assert!(release.contains("branches: [main, release]"));
+        assert!(release.contains("push:\n    branches: [main]"), "releases run from main only");
         let version = jobs(release).into_iter().find(|(n, _)| n == "version").expect("a version job").1;
         assert!(version.contains("refs/tags/v$V") && version.contains("skip=true"), "a released version is skipped");
         for job in ["macos", "release"] {
@@ -135,6 +135,19 @@ mod tests {
         for must in ["gh release download", "sha256sum -c", "Mach-O 64-bit arm64 executable", "code_directory", " Applications$"] {
             assert!(check.contains(must), "the published DMG check covers {must}");
         }
+    }
+
+    #[test]
+    fn each_check_runs_once_where_it_belongs() {
+        // PRs carry the checks; only Release runs on a push (to main); the guard checks each other
+        // run once, when it completes (the owner, 2026-10-16: no duplicate runs).
+        for name in ["ci.yml", "packaging-lint.yml", "own-runners-guard.yml", "sync-upstream.yml"] {
+            assert!(!file(name).contains("\n  push:"), "{name} runs on pushes too: its PR run already covers them");
+        }
+        assert!(file("ci.yml").contains("\n  pull_request:") && file("packaging-lint.yml").contains("\n  pull_request:"));
+        let guard = file("own-runners-guard.yml");
+        assert!(guard.contains("types: [completed]"), "one guard run per other run");
+        assert!(guard.contains("paths: [\".github/workflows/**\"]"), "the file check only when files change");
     }
 
     #[test]

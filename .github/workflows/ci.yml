@@ -1,8 +1,8 @@
 name: CI
 
+# Once per change, on its PR (main only changes through PRs; the PR's run tests the merge result).
+# main itself is tested every night with the fuzz run.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
