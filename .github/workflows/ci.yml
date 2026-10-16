@@ -80,11 +80,19 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # nextest runs the ~170 test binaries side by side (one process per test); `cargo test` runs
+      # them one after another, which left all but ~5 of the host's cores idle (83 s against 28 s
+      # locally). nextest skips doctests, so those run on their own. The host provides
+      # cargo-nextest (own-ci-runners); xtask's workflow test keeps this step parallel.
       - name: Test (with craft-fonts)
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
-        run: cargo test --workspace
+        run: |
+          cargo nextest --version >/dev/null 2>&1 \
+            || { echo "::error::cargo-nextest missing on the runner: see own-ci-runners"; exit 1; }
+          cargo nextest run --workspace --no-fail-fast
+          cargo test --workspace --doc
 
       - name: Layering
         if: runner.os == 'Linux'

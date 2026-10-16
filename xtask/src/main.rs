@@ -12,6 +12,7 @@ mod macos_integration;
 mod parity;
 mod screenshots;
 mod version;
+mod workflows;
 
 type Command = fn(&[String]) -> anyhow::Result<()>;
 
