@@ -44,12 +44,19 @@ pr=$(gh pr list --repo "$REPO" --head "$branch" --state open --json number --jq 
 if [ -z "$pr" ]; then
   current=$(cargo xtask version 2>/dev/null | tail -1)
   git checkout --quiet -B "$branch"
+  took_deny=""
+  RUNNER_TMP="$(mktemp -d)"
   if ! git merge --no-edit --no-ff -m "Merge storytold/pdfcraft main (${up:0:12})" "$UPSTREAM_REF" >/dev/null 2>&1; then
     for f in $(git diff --name-only --diff-filter=U); do
       case "$f" in
         Cargo.toml | Cargo.lock) git checkout --theirs -- "$f" && git add "$f" ;;
         # Only catalog hashes differ on both sides; they are recomputed below for the merged files.
         ATTRIBUTION.toml) git checkout --theirs -- "$f" && git add "$f" ;;
+        # The dependency policy: resolved below, once the rest of the tree is merged.
+        deny.toml)
+          git show ":2:$f" >"$RUNNER_TMP/deny.ours" && git show ":1:$f" >"$RUNNER_TMP/deny.base" && git show ":3:$f" >"$RUNNER_TMP/deny.theirs"
+          took_deny=1
+          ;;
         # A catalog is one string per line: both sides' new lines are kept (a duplicate key fails
         # the i18n tests in the PR's CI, which then stays open for a person).
         crates/ui-egui/src/i18n/*.tsv)
@@ -67,6 +74,20 @@ if [ -z "$pr" ]; then
         *) ;;
       esac
     done
+    # deny.toml: upstream's file, else both sides' entries (both usually add advisory ignores);
+    # whichever the merged tree passes `cargo deny` with, or a person decides.
+    if [ -n "$took_deny" ]; then
+      command -v cargo-deny >/dev/null || die "deny.toml conflicted and cargo-deny isn't on the runner: see own-ci-runners"
+      cp "$RUNNER_TMP/deny.theirs" deny.toml
+      if cargo deny --all-features check >/dev/null 2>&1; then
+        echo "sync: took upstream's deny.toml; cargo deny passes"
+      else
+        git merge-file --union -p "$RUNNER_TMP/deny.ours" "$RUNNER_TMP/deny.base" "$RUNNER_TMP/deny.theirs" >deny.toml || true
+        cargo deny --all-features check >/dev/null 2>&1 || die "the merged tree fails cargo deny with either deny.toml; a person decides"
+        echo "sync: deny.toml keeps both sides' entries; cargo deny passes"
+      fi
+      git add deny.toml
+    fi
     left=$(git diff --name-only --diff-filter=U)
     [ -z "$left" ] || die "upstream merge conflicts that need a person: $(echo "$left" | tr '\n' ' ')"
     git -c core.editor=true commit --quiet --no-edit
