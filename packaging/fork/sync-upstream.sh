@@ -23,10 +23,8 @@ UPSTREAM_REF=refs/fork-notes/upstream
 REPO=krichelj/pdfcraft
 # The fork's workflows; any other one an upstream merge brings is deleted (CLAUDE.md fork rules).
 FORK_WORKFLOWS="ci.yml own-runners-guard.yml packaging-lint.yml release.yml sync-upstream.yml"
-die() {
-  echo "::error::$*" >&2
-  exit 1
-}
+# shellcheck source=lib.sh
+. "$ROOT/packaging/fork/lib.sh"
 
 git config user.name >/dev/null || git config user.name "krichelj"
 git config user.email >/dev/null || git config user.email "krichelj@users.noreply.github.com"
@@ -90,8 +88,7 @@ if [ -z "$pr" ]; then
     git log --no-merges --format='%s' "$UPSTREAM_REF" --not sync-base | head -40 | sed -e 's/^/  - /' -e 's/TODO/to-do/g'
     if [ "$count" -gt 40 ]; then echo "  - and $((count - 40)) more"; fi
   } >"$summary"
-  awk -v f="$summary" '/^- TODO: / { while ((getline l < f) > 0) print l; next } { print }' "$record" >"$record.new"
-  mv "$record.new" "$record"
+  fill_summary "$record" "$summary"
   rm -f "$summary"
   git add -A Cargo.toml Cargo.lock "$record"
   git commit --quiet -m "Release: PdfCraft $version (upstream ${up:0:12})
@@ -105,7 +102,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     echo "sync: dry run; stopping before the push (branch $branch, version $version)"
     exit 0
   fi
-  git -c credential.helper= -c credential.helper='!gh auth git-credential' push --quiet -u origin "$branch"
+  push_as_owner "$branch"
   pr=$(gh pr create --repo "$REPO" --base main --head "$branch" \
     --title "Sync upstream: storytold/pdfcraft@${up:0:12} (PdfCraft $version)" \
     --body-file "$record" | sed -n 's#.*/pull/\([0-9]*\)$#\1#p')
@@ -113,24 +110,5 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   echo "sync: opened PR #$pr"
 fi
 
-# Wait for every check on the PR's head, then merge; a failing check leaves the PR open. CI's test
-# job must be among them, so a PR whose checks haven't started yet is never "green".
-head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)
-deadline=$(($(date +%s) + ${SYNC_CHECKS_TIMEOUT:-7200}))
-while :; do
-  # shellcheck disable=SC2016 # a jq program, not shell
-  state=$(gh api "repos/$REPO/commits/$head/check-runs?per_page=100" --jq '
-    [.check_runs[] | {name, status, conclusion}] as $r
-    | if ($r | map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")) | length) > 0 then "FAILURE"
-      elif ($r | map(select(.name == "test (shared code)" and .conclusion == "success")) | length) > 0
-        and ($r | all(.status == "completed")) then "SUCCESS"
-      else "PENDING" end' 2>/dev/null || echo PENDING)
-  case "$state" in
-    SUCCESS) break ;;
-    FAILURE) die "PR #$pr has failing checks; left open for a person" ;;
-  esac
-  [ "$(date +%s)" -lt "$deadline" ] || die "PR #$pr's checks didn't finish in time; left open"
-  sleep 30
-done
-gh pr merge "$pr" --repo "$REPO" --merge --delete-branch
+merge_when_green "$pr" "${SYNC_CHECKS_TIMEOUT:-7200}"
 echo "sync: merged PR #$pr; the push to main starts the Release workflow"

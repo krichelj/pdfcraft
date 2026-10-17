@@ -112,8 +112,10 @@ mod tests {
         assert!(sync.contains("run: packaging/fork/sync-upstream.sh"));
         assert!(sync.contains("persist-credentials: false"), "never pushes with the workflow's token");
         let script = include_str!("../../packaging/fork/sync-upstream.sh");
-        assert!(script.contains("gh pr create") && script.contains("gh pr merge \"$pr\" --repo \"$REPO\" --merge --delete-branch"));
-        assert!(script.contains(".name == \"test (shared code)\" and .conclusion == \"success\""), "merges only after CI's tests passed");
+        let lib = include_str!("../../packaging/fork/lib.sh");
+        assert!(script.contains("gh pr create") && script.contains("merge_when_green \"$pr\""));
+        assert!(lib.contains("gh pr merge \"$pr\" --repo \"$REPO\" --merge --delete-branch"));
+        assert!(lib.contains(".name == \"test (shared code)\" and .conclusion == \"success\""), "merges only after CI's tests passed");
         assert!(script.contains("cargo xtask fork-notes check"), "and with its release record");
         let guard = file("own-runners-guard.yml");
         assert!(guard.contains("\"Sync upstream\""), "the guard watches it");
@@ -129,6 +131,15 @@ mod tests {
             let j = jobs(release).into_iter().find(|(n, _)| n == job).expect(job).1;
             assert!(j.contains("if: needs.version.outputs.skip != 'true'"), "{job} skips released versions");
         }
+        let bump = jobs(release).into_iter().find(|(n, _)| n == "bump").expect("a bump job").1;
+        assert!(
+            bump.contains("if: needs.version.outputs.skip == 'true' && github.event_name == 'push'"),
+            "a released version that changed is bumped"
+        );
+        assert!(bump.contains("run: packaging/fork/release-bump.sh") && bump.contains("persist-credentials: false"));
+        let script = include_str!("../../packaging/fork/release-bump.sh");
+        assert!(script.contains("next=\"${current%%-*}-p$((level + 1))\""), "the fork's own -p<N> line, beside upstream's version");
+        assert!(script.contains("merge_when_green"), "through a checked PR");
         let draft = jobs(release).into_iter().find(|(n, _)| n == "release").expect("release job").1;
         assert!(draft.contains("gh release edit \"v$VERSION\" --draft=false --latest"), "published, not left a draft");
         let check = draft.split("name: Check the published DMG").nth(1).expect("a published-DMG check");
