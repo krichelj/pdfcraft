@@ -95,6 +95,28 @@ jobs:
           path: ${{ runner.temp }}/release-notes.md
           if-no-files-found: error
 
+  # A push whose version is already released but that changes the fork since that release (a
+  # feature merged): open the next patch release's PR (<base>-p<N+1>, its record listing the PRs since)
+  # and merge it once green; that merge is the push that builds and publishes it.
+  bump:
+    name: next patch release
+    needs: version
+    if: needs.version.outputs.skip == 'true' && github.event_name == 'push'
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Pushes with the owner's gh login (packaging/fork/lib.sh), never this workflow's token.
+          persist-credentials: false
+      - name: Check the owner's gh login
+        run: |
+          gh auth status 2>&1 | grep -q 'workflow' \
+            || { echo "::error::the runner host's gh login lacks the workflow scope: see own-ci-runners"; exit 1; }
+      - name: Open and merge the next patch release
+        run: packaging/fork/release-bump.sh
+
   # The fork's runners are Linux only (own-ci-runners), so macOS is cross-built here: zig links it,
   # the macOS SDK comes from the owner's Xcode (/scratch/XXXXX/macos-sdk).
   macos:

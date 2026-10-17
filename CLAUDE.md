@@ -34,7 +34,10 @@ environment, which deploys only from the `release` branch.
   outside Cargo.toml/Cargo.lock stop it for a person.
 - It uses the owner's gh login on the runner host: the workflow token can't push workflow files,
   and its pushes start no workflows.
-- **Release** runs on every push to main. A version that is already tagged is skipped. Otherwise it
+- **Release** runs on every push to main. If the version is already tagged but the fork changed since,
+  its `bump` job (`packaging/fork/release-bump.sh`) opens the next patch release's PR
+  (`<base>-p<N+1>`, record = the PRs merged since) and merges it once green; that merge releases.
+  A version that is already tagged is not rebuilt. Otherwise it
   builds, publishes "PdfCraft v<version>" with the record as notes, then downloads the published DMG
   back and checks it: the app, the Applications link, arm64, the signature and the version.
 
