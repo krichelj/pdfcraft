@@ -8,8 +8,12 @@ use anyhow::{Context, anyhow, bail};
 
 use crate::layers;
 
+/// The workspace root of the checkout `cargo xtask` runs in. `cargo run` sets CARGO_MANIFEST_DIR for
+/// the running binary, which is right even when a build directory shared by several checkouts
+/// (CARGO_TARGET_DIR) hands this binary to another one; the compiled-in path is the fallback.
 pub fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask has a parent dir").to_path_buf()
+    let manifest = std::env::var_os("CARGO_MANIFEST_DIR").map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from);
+    manifest.parent().map_or_else(|| manifest.clone(), Path::to_path_buf)
 }
 
 /// Cargo's target directory: `CARGO_TARGET_DIR` when it is set (parallel agents use their own),
@@ -580,5 +584,15 @@ mod tests {
             .find(|chunk| chunk.contains("com.adobe.pdf"))
             .expect("a document type for com.adobe.pdf")
             .to_string()
+    }
+}
+
+#[cfg(test)]
+mod root_tests {
+    #[test]
+    fn the_root_is_the_checkout_cargo_runs_in() {
+        // Under `cargo test` CARGO_MANIFEST_DIR is xtask's own directory in this checkout.
+        let root = super::root();
+        assert!(root.join("Cargo.toml").is_file() && root.join("xtask").is_dir(), "{}", root.display());
     }
 }

@@ -12,7 +12,7 @@ T="$(mktemp -d)"
 if [ "${TEST_SYNC_KEEP:-}" = 1 ]; then echo "kept in $T" >&2; else trap 'rm -rf "$T"' EXIT; fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$SRC/target}"
 export GIT_AUTHOR_NAME=T GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=T GIT_COMMITTER_EMAIL=t@example.com
-version=$(cd "$SRC" && cargo xtask version 2>/dev/null | tail -1)
+version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' "$SRC/Cargo.toml" | head -1)
 base=$(grep -o 'storytold/pdfcraft/commit/[0-9a-f]\{40\}' "$SRC/docs/fork/releases/v$version.md" | head -1 | cut -d/ -f4)
 [ -n "$base" ] || { echo "no upstream base recorded for $version" >&2; exit 1; }
 level="${version##*-p}"
@@ -111,6 +111,16 @@ check "catalog hash conflict: merged" ok cat
 check "  with upstream's string" grep -q "An upstream string" "$T/s-cat/crates/ui-egui/src/i18n/ja.tsv"
 check "  and the fork's strings" grep -q "Install and relaunch" "$T/s-cat/crates/ui-egui/src/i18n/ja.tsv"
 check "  and every hash right" assets_ok cat
+
+# 5b. Upstream adds to deny.toml where the fork did: upstream's policy is taken if the tree passes it.
+upstream deny
+sed -i '/RUSTSEC-2024-0370/a\    { id = "RUSTSEC-2099-0001", reason = "upstream test entry" },' "$T/up-deny/deny.toml"
+up deny commit -qam "upstream: a dependency policy change"
+sync deny
+check "deny.toml conflict: merged" ok deny
+check "  with upstream's entry" grep -q "RUSTSEC-2099-0001" "$T/s-deny/deny.toml"
+check "  and the fork's" grep -q "RUSTSEC-2026-0371" "$T/s-deny/deny.toml"
+check "  checked by cargo deny" said deny "cargo deny passes"
 
 # 6. Upstream edits a line of code the fork changed: a person decides.
 upstream code
