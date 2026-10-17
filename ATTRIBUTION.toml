@@ -7,7 +7,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Greek UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "d450c9b56a4379c08326971eb2bdd0c557939d0d47d3433eb5331322b690cee7"
+sha256 = "bf6d520ec36f158d27e427a69d2b732b29cbc0a892763231c24d9ef44d7227d5"
 
 # ATTRIBUTION.toml: one entry per asset (AGENTS.md §1). The source of truth for provenance and licences.
 # ATTRIBUTION.md is generated from this file: `cargo xtask assets --write`. Checked by `cargo xtask assets` (part of `xtask ci`).
@@ -30,7 +30,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Simplified Chinese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "b59680535f95bda4ccb37300244ba3cec84ea7b9d33f4725776de98c68b91ff8"
+sha256 = "0c4fddaf32b636f7438765b83d3120e58b7e26b91da72d48e19b2ef568181f70"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/zh-hant.tsv"
@@ -41,7 +41,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Traditional Chinese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "3d10f467627cd9886549f32f8ff0b4ab2386e20717f973bfc8602f8510329803"
+sha256 = "b668f402ed8e364f3000299f56065c6271d40cdd8f9c00716e0c8cc0d3cce78c"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/cs.tsv"
@@ -52,7 +52,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Czech UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "279be97d794703689df2571382848bc29b95eb37951aaf5d710b5522b24bf413"
+sha256 = "39091d41d4bceffa92a50e71e10d3674c48ef381f6cd638c6bd4d97ae7a48ec7"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/pt-br.tsv"
@@ -63,7 +63,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Brazilian Portuguese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "4d55df2a9b50171309d121d0187797b53520fb92cb0685938bb39971caa217d2"
+sha256 = "aa1a8d93cd6b5049cb71c53c8af7fd845dc5c33c4879bafdad5b0fe4085f833a"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/es.tsv"
@@ -74,7 +74,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Spanish UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "7e88835f13e3fc04f76fc6a937587d5f5f456647cff079f1ae4a886fe0208a34"
+sha256 = "629d34c77045ce451f74ae5fa91e505d9b26e4a95c001c13bc5f7e0040393683"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/fr.tsv"
@@ -85,7 +85,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "French UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "d78055236d024100129661dcce52290c3f047956b8381e1113a0ccbb4828bd39"
+sha256 = "d365451bfcc30df776336bf638434e5af6ae8549b419fff5513c23fa156c5781"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/de.tsv"
@@ -96,7 +96,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "German UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "d45f35c5b178b7d8825e63a1e3dbf5fa75213f3d9d6b5c81980e1fd13b7f93b8"
+sha256 = "8db276d178f71b739e8eec9286500b1edd894ff9e63c34005eb74c44b8ff2f30"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/te.tsv"
@@ -107,7 +107,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Telugu UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "ab98ea8cb6cd9f7f3f5a650b3667e723e0ebc5224b987af4b256a9f88278128f"
+sha256 = "2353da3de4da1448c614072e3e94d13e831387f6f51c9e9817d3f1c64e948d58"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/it.tsv"
@@ -118,7 +118,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Italian UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "cd281e012cb6625de511d7ab6f149f035375046bab1dcbb512cbaa5eb30866c8"
+sha256 = "c9fe0e4c2d2a30318de4355d4034e16098b44082e41decef4355f1bb9ac61240"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/pl.tsv"
@@ -129,7 +129,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Polish UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "2577d693d3e08d7f717447c3231166927efe8e1edcf4181785bda0daf1fed0c0"
+sha256 = "82ec9e43ab60a15bb8828b516f5e6c3f8188d9919708ce53798fb7e049b12489"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/ru.tsv"
@@ -140,7 +140,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Russian UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "6da051922d6e04c29a9714028b3099ae1974073c500c07e72dee97b476a61ae1"
+sha256 = "9cc57d72206311995149ff6d903066cee3ed21753f762510f0a4bb41a500324b"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/hu.tsv"
@@ -151,7 +151,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Hungarian UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "755b73f3472f77fbb575a1c7473aeae423e693a39ac9d2279e27fd400b8d6b33"
+sha256 = "048407ee3d4b9a98e65b830b8c3849ad49f35f483f01a4da7f6e55b288ea214f"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/bg.tsv"
@@ -162,7 +162,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Bulgarian UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "2fcf15f0cf9eaebf38176b9eb87634c5fa7687ce41aaca0a3666ca1fc2f62290"
+sha256 = "c0a48d302e10e253a77276f3a0abca8798825ea778256074d3f91acfded76e6e"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/kk.tsv"
@@ -173,7 +173,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Kazakh UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "f9a0dc9f5cca90f3ef2c4134cc5c764b3239f62aad915523bcfe2fec4715e2ab"
+sha256 = "72a110d56e6f2c4d861adcfa6385585b8a5f987e2dce9db4a3f3a50ad587a236"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/ja.tsv"
@@ -184,7 +184,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Japanese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "43aed3852fc011b0409deee82dcc0ee45ce745a7536395ac62827138513973fc"
+sha256 = "e8a8f475197069ef6a0ba5b60d76a2efe06f9c4bfd2235da024c9fd325af19c1"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/uk.tsv"
@@ -195,7 +195,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Ukrainian UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "9399495760c24ad491167d712a278c78e66317d7401c6ba462fa8688b4bd69da"
+sha256 = "74c2e21c4d4d45aaafb11afdb5286d4dcec0f308492085c9f068d9055a4173de"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/ar.tsv"
@@ -206,7 +206,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Arabic UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "7235eb8c38d95e47af8f16c7a20d26a5f397fddfac553d09667152a1e19dd340"
+sha256 = "5a9403f4f132831aa8a9e497160143457036c204227a7bf7813a6e6b0d074e7a"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/tr.tsv"
@@ -217,7 +217,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Turkish UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "2746659731cc6ea3d3ef877db3b4d8e45d7c5a059b9ac3df0a257bfcd61ee2a0"
+sha256 = "608de5577d78af741f65739f7e99d8364a2cd114fa5ecac0b17a45c95599b2ee"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/lt.tsv"
@@ -228,7 +228,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Lithuanian UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "d98bca7e26facfc7af22e6a5054dbf949305209618ac2c002c30003699f1c94f"
+sha256 = "1357c8fc0e71fd19a42ffc34ea6ce1718cf218d1e6dc3aff34f3775fc2789350"
 
 
 [[asset]]
@@ -3352,7 +3352,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Vietnamese UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "8cfc57ce6c62a2a27eb24d8544a6aa83e2efb893015b107e9df913c163e2c025"
+sha256 = "e8e37d23d1b27c0458477c8aeb337c09526af86486786b3803affe99fa61c0ba"
 
 [[asset]]
 path = "crates/ui-egui/src/i18n/sl.tsv"
@@ -3363,7 +3363,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "Slovene UI strings, compiled in by crates/ui-egui/src/i18n/mod.rs"
-sha256 = "065efd8b923d76207c75282175e25563aed328d7e2dd8c6a6a6f73a3adcd52e5"
+sha256 = "3472514e0877f57345cdfdbb8c8b499e1c1f7b59f9e2d1c16f3129b12d1639a9"
 
 [[asset]]
 
