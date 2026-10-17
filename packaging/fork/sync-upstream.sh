@@ -48,9 +48,19 @@ if [ -z "$pr" ]; then
     for f in $(git diff --name-only --diff-filter=U); do
       case "$f" in
         Cargo.toml | Cargo.lock) git checkout --theirs -- "$f" && git add "$f" ;;
+        # Only catalog hashes differ on both sides; they are recomputed below for the merged files.
+        ATTRIBUTION.toml) git checkout --theirs -- "$f" && git add "$f" ;;
+        # A catalog is one string per line: both sides' new lines are kept (a duplicate key fails
+        # the i18n tests in the PR's CI, which then stays open for a person).
+        crates/ui-egui/src/i18n/*.tsv)
+          git show ":2:$f" >"$f.ours" && git show ":1:$f" >"$f.base" && git show ":3:$f" >"$f.theirs"
+          git merge-file --union -p "$f.ours" "$f.base" "$f.theirs" >"$f"
+          rm -f "$f.ours" "$f.base" "$f.theirs"
+          git add "$f"
+          ;;
         .github/workflows/*)
           case " $FORK_WORKFLOWS " in
-            *" ${f##*/} "*) die "upstream changed the fork's own workflow $f; resolve it by hand" ;;
+            *" ${f##*/} "*) git checkout --ours -- "$f" && git add "$f" ;;
             *) git rm --quiet -f -- "$f" ;;
           esac
           ;;
@@ -60,6 +70,30 @@ if [ -z "$pr" ]; then
     left=$(git diff --name-only --diff-filter=U)
     [ -z "$left" ] || die "upstream merge conflicts that need a person: $(echo "$left" | tr '\n' ' ')"
     git -c core.editor=true commit --quiet --no-edit
+  fi
+  # The merged catalogs' hashes, then every asset must check out (AGENTS.md §1), or a person decides.
+  rehash_catalogs
+  cargo xtask assets >/dev/null 2>&1 || die "the merged assets don't match ATTRIBUTION.toml: run cargo xtask assets"
+  if ! git diff --quiet ATTRIBUTION.toml; then
+    git add ATTRIBUTION.toml
+    git commit --quiet -m "Fork: record the merged translation catalogs' hashes
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+  fi
+  # The fork's own workflows are the fork's: an upstream edit to one is not taken, even when it
+  # merges cleanly, and the record says so.
+  kept=""
+  for w in $FORK_WORKFLOWS; do
+    if ! git diff --quiet sync-base HEAD -- ".github/workflows/$w"; then
+      git checkout sync-base -- ".github/workflows/$w"
+      kept="$kept $w"
+    fi
+  done
+  if [ -n "$kept" ]; then
+    git commit --quiet -m "Fork: keep the fork's own workflows (upstream changed:$kept)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+    echo "sync: kept the fork's version of$kept"
   fi
   # Only the fork's workflows stay (upstream adds ones for other platforms and GitHub's runners).
   for w in .github/workflows/*.yml; do
@@ -87,6 +121,7 @@ if [ -z "$pr" ]; then
     echo "- Brings in $count upstream storytold/pdfcraft commits, up to [\`${up:0:12}\`](https://github.com/storytold/pdfcraft/commit/$up):"
     git log --no-merges --format='%s' "$UPSTREAM_REF" --not sync-base | head -40 | sed -e 's/^/  - /' -e 's/TODO/to-do/g'
     if [ "$count" -gt 40 ]; then echo "  - and $((count - 40)) more"; fi
+    if [ -n "$kept" ]; then echo "- Keeps the fork's own workflows; upstream's changes to$kept were not taken."; fi
   } >"$summary"
   fill_summary "$record" "$summary"
   rm -f "$summary"

@@ -44,3 +44,18 @@ fill_summary() {
   awk -v f="$2" '/^- TODO: / { while ((getline l < f) > 0) print l; next } { print }' "$1" >"$1.new"
   mv "$1.new" "$1"
 }
+
+# Re-record the SHA-256 of every translation catalog in ATTRIBUTION.toml. Both sides add strings to
+# the catalogs, so after an upstream merge their recorded hashes are upstream's or the fork's, never
+# those of the merged files; the catalogs are the only assets the fork changes (AGENTS.md §1).
+rehash_catalogs() {
+  local f h
+  for f in crates/ui-egui/src/i18n/*.tsv; do
+    h=$(sha256sum "$f" | cut -d' ' -f1)
+    awk -v p="path = \"$f\"" -v h="$h" '
+      $0 == p { want = 1 }
+      want && /^sha256 = "/ { $0 = "sha256 = \"" h "\""; want = 0 }
+      { print }' ATTRIBUTION.toml >ATTRIBUTION.toml.new
+    mv ATTRIBUTION.toml.new ATTRIBUTION.toml
+  done
+}

@@ -119,6 +119,8 @@ mod tests {
         assert!(script.contains("cargo xtask fork-notes check"), "and with its release record");
         let guard = file("own-runners-guard.yml");
         assert!(guard.contains("\"Sync upstream\""), "the guard watches it");
+        let test = jobs(CI).into_iter().find(|(n, _)| n == "test").expect("ci.yml test job").1;
+        assert!(test.contains("run: packaging/fork/test-sync.sh"), "its scenarios run on every PR");
     }
 
     #[test]
