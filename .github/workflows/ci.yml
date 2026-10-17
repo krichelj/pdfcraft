@@ -109,6 +109,12 @@ jobs:
       - name: Fork release notes
         run: cargo xtask fork-notes pending
 
+      # The daily sync and the automatic patch releases, run as they are against synthetic upstream
+      # histories (plain change, new workflow, version bump, catalog conflict, code conflict, the
+      # fork's own workflows) and a stand-in gh for merge-when-green.
+      - name: Fork automation (sync and release scenarios)
+        run: packaging/fork/test-sync.sh
+
       - name: Layering
         if: runner.os == 'Linux'
         run: cargo xtask layers
