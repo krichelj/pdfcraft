@@ -35,6 +35,7 @@ pub mod canvas;
 mod chrome;
 mod combine_grid;
 mod image_pick;
+pub mod menu_bar;
 mod tags_ui;
 pub use combine_grid::ThumbState as CombineThumb;
 mod combine_ui;
@@ -616,6 +617,11 @@ pub struct PdfCraftApp {
     pub unsaved_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Requests from the operating system, polled every frame (macOS Apple events).
     pub os_events: Option<OsEventsFn>,
+    /// The platform menu bar (macOS), showing [`menu_bar::MenuBarModel`]; set by the desktop app.
+    pub menu_bar: Option<Box<dyn menu_bar::MenuBar>>,
+    /// Keys the menu bar took that belong to the focused text field (⌘Z in a text box), handed
+    /// back to egui as input on the next frame.
+    menu_bar_keys: Vec<egui::Event>,
     /// Save delivers to the embedding page instead of downloading (web, see [`HostSaveFn`]).
     pub host_save: Option<HostSaveFn>,
     /// Reports unsaved work to the embedding page (web, see [`HostDirtyFn`]).
@@ -963,6 +969,8 @@ impl PdfCraftApp {
             failed_inbox: Default::default(),
             unsaved_flag: Default::default(),
             os_events: None,
+            menu_bar: None,
+            menu_bar_keys: Vec::new(),
             host_save: None,
             host_dirty: None,
             close_request: None,
@@ -2904,6 +2912,7 @@ impl eframe::App for PdfCraftApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         // Before egui reads this frame's wheel input.
         self.scroll_speed.apply(ctx, raw);
+        raw.events.append(&mut self.menu_bar_keys);
         if raw.hovered_files.is_empty() && raw.dropped_files.is_empty() {
             return;
         }
@@ -2930,6 +2939,7 @@ impl eframe::App for PdfCraftApp {
             }
             self.poll_pending_opens();
         }
+        self.sync_menu_bar();
         // Chinese wants its own faces before the Japanese ones (one baseline per line).
         let cjk = theme::CjkPreference::for_language(lang.code());
         if !self.styled {
