@@ -850,6 +850,31 @@ impl std::io::Read for Reading {
     }
 }
 
+/// Send the line that says why a connection ends, then end it so the line arrives. Closing a socket
+/// that still holds unread input (a client feeding a byte at a time) makes Linux send a reset and
+/// drop whatever it hasn't sent yet, so under load the line was lost (CI, three times: "the server
+/// says why before closing"). Half-close first, then read and drop what the client still sends,
+/// for at most a second and a megabyte, before the socket closes.
+#[cfg(not(target_arch = "wasm32"))]
+fn say_and_close(stream: &mut std::net::TcpStream, line: &impl std::fmt::Display) {
+    use std::io::{Read, Write};
+    let _ = writeln!(stream, "{line}").and_then(|_| stream.flush());
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let mut buf = [0u8; 4096];
+    let mut drained = 0usize;
+    while drained < (1 << 20) {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match stream.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => drained = drained.saturating_add(n),
+        }
+    }
+}
+
 /// Listen on `127.0.0.1` (random port) and forward authenticated requests to `client`.
 ///
 /// Protocol: newline-delimited JSON-RPC 2.0. The first request on a connection must be
@@ -899,14 +924,14 @@ fn serve_with(client: ControlClient, limits: Limits) -> std::io::Result<Endpoint
                         Err(e) if !authed && matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {
                             let secs = limits.auth_deadline.as_secs_f64();
                             let e = rpc_error(Value::Null, -32004, &format!("not authenticated within {secs} s"));
-                            let _ = writeln!(write, "{e}").and_then(|_| write.flush());
+                            say_and_close(&mut write, &e);
                             break;
                         }
                         // End of stream or a failed read ends the connection, as before.
                         Ok(LineRead::End) | Err(_) => break,
                         Ok(LineRead::TooLong) => {
                             let e = rpc_error(Value::Null, -32600, &format!("request line longer than {max} bytes before auth"));
-                            let _ = writeln!(write, "{e}").and_then(|_| write.flush());
+                            say_and_close(&mut write, &e);
                             break;
                         }
                     }
