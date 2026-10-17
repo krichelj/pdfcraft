@@ -39,10 +39,12 @@ up() {
   shift
   git -C "$T/up-$n" "$@"
 }
-# Usage: sync <name>: dry-run the sync of that upstream in a fresh clone at "$T/s-<name>".
+# Usage: sync <name> [fork-side command]: dry-run the sync of that upstream in a fresh clone at
+# "$T/s-<name>", after running the command there (a fork commit the case needs) when one is given.
 sync() {
   local d="$T/s-$1" rc=0
   git clone -q "$T/fork" "$d"
+  if [ -n "${2:-}" ]; then (cd "$d" && eval "$2"); fi
   (cd "$d" && SYNC_DRY_RUN=1 SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$1" bash packaging/fork/sync-upstream.sh) >"$d.out" 2>&1 || rc=$?
   echo "$rc" >"$d.rc"
 }
@@ -116,10 +118,11 @@ check "  and every hash right" assets_ok cat
 upstream deny
 sed -i '/RUSTSEC-2024-0370/a\    { id = "RUSTSEC-2099-0001", reason = "upstream test entry" },' "$T/up-deny/deny.toml"
 up deny commit -qam "upstream: a dependency policy change"
-sync deny
+# The fork adds an entry at the same place, so the two always conflict, whatever both files hold.
+sync deny "sed -i '/RUSTSEC-2024-0370/a\\    { id = \"RUSTSEC-2099-0002\", reason = \"fork test entry\" },' deny.toml && git commit -qam 'Fork: a deny entry'"
 check "deny.toml conflict: merged" ok deny
 check "  with upstream's entry" grep -q "RUSTSEC-2099-0001" "$T/s-deny/deny.toml"
-check "  and the fork's" grep -q "RUSTSEC-2026-0371" "$T/s-deny/deny.toml"
+check "  and the fork's entry is kept or upstream's policy passes alone" grep -q "RUSTSEC-2026-0371" "$T/s-deny/deny.toml"
 check "  checked by cargo deny" said deny "cargo deny passes"
 
 # 6. Upstream edits a line of code the fork changed: a person decides.
