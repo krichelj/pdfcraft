@@ -11,6 +11,8 @@ pub const DISCORD: &str = "https://discord.gg/artcraft";
 pub const WEBSITE: &str = "https://getartcraft.com";
 pub const APP_PAGE: &str = "https://getartcraft.com/apps/pdfcraft";
 pub const GITHUB: &str = "https://github.com/storytold/pdfcraft";
+/// This fork: macOS on Apple silicon, with its own releases and in-app updates (CLAUDE.md).
+pub const FORK: &str = "https://github.com/krichelj/pdfcraft";
 
 /// A link and the registry command that opens it.
 #[derive(Clone, Copy, Debug)]
@@ -27,6 +29,7 @@ pub const LINKS: &[Link] = &[
     Link { command: "help.discord", label: "Join the ArtCraft Discord", url: DISCORD, icon: "messages-square" },
     Link { command: "help.app_page", label: "PdfCraft web page", url: APP_PAGE, icon: "globe" },
     Link { command: "help.github", label: "PdfCraft on GitHub", url: GITHUB, icon: "code-xml" },
+    Link { command: "help.fork", label: "PdfCraft fork on GitHub", url: FORK, icon: "git-compare" },
     Link { command: "help.website", label: "ArtCraft website", url: WEBSITE, icon: "external-link" },
 ];
 

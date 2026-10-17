@@ -373,6 +373,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("help.discord", "Join the ArtCraft Discord", HELP, None, Nothing, "messages-square"),
     c("help.app_page", "PdfCraft web page", HELP, None, Nothing, "globe"),
     c("help.github", "PdfCraft on GitHub", HELP, None, Nothing, "code-xml"),
+    c("help.fork", "PdfCraft fork on GitHub", HELP, None, Nothing, "git-compare"),
     c("help.website", "ArtCraft website", HELP, None, Nothing, "external-link"),
     c("help.check_updates", "Check for updates…", HELP, None, Nothing, "cloud"),
     c("help.about", "About PdfCraft", HELP, None, Nothing, "info"),
