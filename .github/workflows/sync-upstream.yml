@@ -9,7 +9,9 @@ name: Sync upstream
 
 on:
   schedule:
-    - cron: "0 6 * * *" # daily, 06:00 UTC
+    # Hourly: a new upstream release reaches the fork (as <its version>-p1) within the hour. A run
+    # with nothing new ends after one fetch.
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -36,3 +38,10 @@ jobs:
             || { echo "::error::the runner host's gh login lacks the workflow scope: see own-ci-runners"; exit 1; }
       - name: Sync storytold/pdfcraft main
         run: packaging/fork/sync-upstream.sh
+      # The gate on the fork's version line: main's version must be built on upstream's latest
+      # release (<X.Y.Z>-p<N>, X.Y.Z no older). The sync above adds a new release; this proves it.
+      - name: Fork version is on top of upstream's latest release
+        run: |
+          git fetch --quiet origin main
+          git checkout --quiet origin/main
+          cargo xtask version check-upstream

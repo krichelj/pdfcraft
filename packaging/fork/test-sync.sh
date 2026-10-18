@@ -146,7 +146,7 @@ check "  and the record says so" grep -q "upstream's changes to ci.yml were not 
 bump_case() {
   local d="$T/b-$1" rc=0
   git clone -q "$T/fork" "$d"
-  (cd "$d" && eval "$2" && BUMP_DRY_RUN=1 bash packaging/fork/release-bump.sh) >"$d.out" 2>&1 || rc=$?
+  (cd "$d" && eval "$2" && BUMP_DRY_RUN=1 BUMP_SKIP_UPSTREAM_CHECK=1 bash packaging/fork/release-bump.sh) >"$d.out" 2>&1 || rc=$?
   echo "$rc" >"$d.rc"
 }
 git -C "$T/fork" tag -f "v$version" >/dev/null

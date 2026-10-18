@@ -9,7 +9,9 @@ use pdfcraft_ui_egui::updates::{Release, UpdateInstaller, UpdateSource, is_newer
 
 fn source(answer: Result<&str, &str>) -> UpdateSource {
     let answer = answer.map(str::to_string).map_err(str::to_string);
-    Arc::new(move || answer.clone().map(|v| Release { url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{v}"), version: v }))
+    Arc::new(move || {
+        answer.clone().map(|v| Release { url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{v}"), version: v, from_fork: true })
+    })
 }
 
 fn harness(answer: Result<&str, &str>) -> Harness<'static, PdfCraftApp> {
@@ -99,7 +101,7 @@ fn nothing_is_asked_until_the_user_checks() {
         let counted = counted.clone();
         app.update_source = Some(Arc::new(move || {
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/krichelj/pdfcraft/releases/tag/v99.0.0".into() })
+            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/krichelj/pdfcraft/releases/tag/v99.0.0".into(), from_fork: true })
         }));
         app
     });
@@ -207,7 +209,11 @@ fn the_launch_check_is_silent_unless_a_newer_release_exists() {
             let mut app = PdfCraftApp::new();
             app.set_option("language", "en").unwrap();
             app.update_source = Some(Arc::new(move || {
-                let r = Ok(Release { url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{latest}"), version: latest.clone() });
+                let r = Ok(Release {
+                    url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{latest}"),
+                    version: latest.clone(),
+                    from_fork: true,
+                });
                 counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 r
             }));
@@ -225,4 +231,24 @@ fn the_launch_check_is_silent_unless_a_newer_release_exists() {
     std::thread::sleep(std::time::Duration::from_millis(50));
     h.run_steps(4);
     assert!(h.query_by_label_contains("Couldn't check for updates").is_none());
+}
+
+#[test]
+fn a_newer_upstream_release_is_offered_for_download_not_installed() {
+    let (install, asked) = installer(Ok(()));
+    let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.update_source = Some(Arc::new(|| {
+            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/storytold/pdfcraft/releases/tag/v99.0.0".into(), from_fork: false })
+        }));
+        app.update_installer = Some(install);
+        app
+    });
+    h.state_mut().execute("help.check_updates");
+    settle(&mut h);
+    h.get_by_label_contains("PdfCraft 99.0.0 is available");
+    assert!(h.query_by_label("Install and relaunch").is_none(), "installing upstream's build would replace the fork's");
+    h.get_by_label("Download");
+    assert!(asked.lock().unwrap().is_empty());
 }
