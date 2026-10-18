@@ -192,38 +192,57 @@ fn guarded(a: &mut Automation, tool: &str, args: &Value) -> std::result::Result<
 
 #[test]
 fn no_tool_panics_on_hostile_arguments() {
-    let root = tmp("args");
-    let mut a = Automation::new().with_root(&root).expect("root");
+    // Every tool gets every hostile value. The tools are split into shards that run side by side,
+    // each with its own Automation and root (one shared Automation made this the suite's longest
+    // test at 26 s, alone setting how long the whole suite takes).
     let values = zoo();
-    let mut failures = Vec::new();
-    let mut calls = 0usize;
+    let defs: Vec<_> = tools().into_iter().collect();
+    let shards = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 16);
+    let per = defs.len().div_ceil(shards).max(1);
+    let results: Vec<(usize, Vec<String>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = defs
+            .chunks(per)
+            .enumerate()
+            .map(|(i, chunk)| {
+                let values = &values;
+                scope.spawn(move || {
+                    let root = tmp(&format!("args-{i}"));
+                    let mut a = Automation::new().with_root(&root).expect("root");
+                    let (mut calls, mut failures) = (0usize, Vec::new());
+                    for def in chunk {
+                        // The whole arguments object, not just its properties.
+                        for bad in [json!(null), json!([]), json!("string"), json!(7), json!(true), json!({})] {
+                            calls += 1;
+                            if let Err(e) = guarded(&mut a, def.name, &bad) {
+                                failures.push(e);
+                            }
+                        }
+                        let props: Vec<String> = def.input_schema["properties"].as_object().map(|p| p.keys().cloned().collect()).unwrap_or_default();
+                        for prop in &props {
+                            for value in values {
+                                let mut obj = plausible(def);
+                                obj.insert(prop.clone(), value.clone());
+                                calls += 1;
+                                if let Err(e) = guarded(&mut a, def.name, &Value::Object(obj)) {
+                                    failures.push(e);
+                                }
+                            }
+                        }
+                    }
+                    let _ = std::fs::remove_dir_all(&root);
+                    (calls, failures)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("a shard panicked outside a tool call")).collect()
+    });
+    let calls: usize = results.iter().map(|r| r.0).sum();
+    let failures: Vec<String> = results.into_iter().flat_map(|r| r.1).collect();
 
-    for def in tools() {
-        // The whole arguments object, not just its properties.
-        for bad in [json!(null), json!([]), json!("string"), json!(7), json!(true), json!({})] {
-            calls += 1;
-            if let Err(e) = guarded(&mut a, def.name, &bad) {
-                failures.push(e);
-            }
-        }
-        let props: Vec<String> = def.input_schema["properties"].as_object().map(|p| p.keys().cloned().collect()).unwrap_or_default();
-        for prop in &props {
-            for value in &values {
-                let mut obj = plausible(&def);
-                obj.insert(prop.clone(), value.clone());
-                calls += 1;
-                if let Err(e) = guarded(&mut a, def.name, &Value::Object(obj)) {
-                    failures.push(e);
-                }
-            }
-        }
-    }
-
-    eprintln!("hostile arguments: {calls} calls over {} tools, {} panics", tools().len(), failures.len());
+    eprintln!("hostile arguments: {calls} calls over {} tools in {shards} shards, {} panics", defs.len(), failures.len());
     for f in failures.iter().take(20) {
         eprintln!("  {f}");
     }
-    let _ = std::fs::remove_dir_all(&root);
     assert!(failures.is_empty(), "{} tool call(s) panicked; the first is: {}", failures.len(), failures.first().map_or("", String::as_str));
 }
 

@@ -160,7 +160,8 @@ jobs:
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
-        run: packaging/macos/cross-package.sh
+        # A build directory that persists on the runner host, so a release rebuilds only what changed.
+        run: CARGO_TARGET_DIR="$HOME/.cache/ci-target/pdfcraft-release-macos" packaging/macos/cross-package.sh
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos

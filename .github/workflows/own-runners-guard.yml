@@ -14,7 +14,7 @@ on:
   schedule:
     - cron: '23 */6 * * *'
   workflow_run:
-    workflows: ["CI", "Packaging lint", "Release", "Sync upstream"]
+    workflows: ["CI", "Packaging lint", "Release", "Sync upstream", "Fork automation", "Auto-merge"]
     types: [completed]
 
 permissions:

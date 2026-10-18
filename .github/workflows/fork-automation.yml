@@ -1,0 +1,32 @@
+# The fork's own automation (packaging/fork: the upstream sync and the automatic patch releases),
+# run as it is against synthetic upstream histories and a stand-in gh (packaging/fork/test-sync.sh).
+# Only on PRs that change it, or what it uses: the rest of the code doesn't affect it.
+name: Fork automation
+
+on:
+  pull_request:
+    paths: ["packaging/fork/**", "xtask/**", ".github/workflows/**", "deny.toml", "ATTRIBUTION.toml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-automation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scenarios:
+    name: sync and release scenarios
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The scenarios read the release tags and the recorded upstream base.
+          fetch-depth: 0
+      - name: Scenarios
+        run: |
+          echo "CARGO_TARGET_DIR=$HOME/.cache/ci-target/pdfcraft-fork-automation" >> "$GITHUB_ENV"
+          export CARGO_TARGET_DIR="$HOME/.cache/ci-target/pdfcraft-fork-automation"
+          packaging/fork/test-sync.sh

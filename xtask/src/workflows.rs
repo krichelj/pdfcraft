@@ -4,12 +4,14 @@
 #[cfg(test)]
 mod tests {
     const CI: &str = include_str!("../../.github/workflows/ci.yml");
-    const ALL: [(&str, &str); 5] = [
+    const ALL: [(&str, &str); 7] = [
         ("ci.yml", CI),
         ("release.yml", include_str!("../../.github/workflows/release.yml")),
         ("packaging-lint.yml", include_str!("../../.github/workflows/packaging-lint.yml")),
         ("own-runners-guard.yml", include_str!("../../.github/workflows/own-runners-guard.yml")),
         ("sync-upstream.yml", include_str!("../../.github/workflows/sync-upstream.yml")),
+        ("fork-automation.yml", include_str!("../../.github/workflows/fork-automation.yml")),
+        ("auto-merge.yml", include_str!("../../.github/workflows/auto-merge.yml")),
     ];
 
     fn file(name: &str) -> &'static str {
@@ -122,8 +124,11 @@ mod tests {
         assert!(script.contains("cargo xtask fork-notes check"), "and with its release record");
         let guard = file("own-runners-guard.yml");
         assert!(guard.contains("\"Sync upstream\""), "the guard watches it");
-        let test = jobs(CI).into_iter().find(|(n, _)| n == "test").expect("ci.yml test job").1;
-        assert!(test.contains("run: packaging/fork/test-sync.sh"), "its scenarios run on every PR");
+        let scenarios = file("fork-automation.yml");
+        assert!(
+            scenarios.contains("packaging/fork/test-sync.sh") && scenarios.contains("\"packaging/fork/**\""),
+            "its scenarios run on PRs that change it"
+        );
     }
 
     #[test]
@@ -157,13 +162,29 @@ mod tests {
     fn each_check_runs_once_where_it_belongs() {
         // PRs carry the checks; only Release runs on a push (to main); the guard checks each other
         // run once, when it completes (the owner, 2026-10-16: no duplicate runs).
-        for name in ["ci.yml", "packaging-lint.yml", "own-runners-guard.yml", "sync-upstream.yml"] {
+        for name in ["ci.yml", "packaging-lint.yml", "own-runners-guard.yml", "sync-upstream.yml", "fork-automation.yml"] {
             assert!(!file(name).contains("\n  push:"), "{name} runs on pushes too: its PR run already covers them");
         }
         assert!(file("ci.yml").contains("\n  pull_request:") && file("packaging-lint.yml").contains("\n  pull_request:"));
         let guard = file("own-runners-guard.yml");
         assert!(guard.contains("types: [completed]"), "one guard run per other run");
         assert!(guard.contains("paths: [\".github/workflows/**\"]"), "the file check only when files change");
+    }
+
+    #[test]
+    fn a_pr_whose_checks_all_pass_is_merged() {
+        let wf = file("auto-merge.yml");
+        assert!(wf.contains("types: [opened, reopened, synchronize, ready_for_review]"));
+        assert!(wf.contains("workflows: [\"CI\", \"Packaging lint\", \"Fork automation\"]"), "and again whenever a check finishes");
+        assert!(include_str!("../../packaging/fork/lib.sh").contains("&filter=latest"), "only each check's latest attempt counts");
+        assert!(wf.contains("run: packaging/fork/auto-merge.sh \"$PR\"") && wf.contains("persist-credentials: false"));
+        assert!(
+            wf.contains("!github.event.pull_request.draft") && wf.contains("head.repo.full_name == github.repository"),
+            "never drafts or other repositories"
+        );
+        let script = include_str!("../../packaging/fork/auto-merge.sh");
+        assert!(script.contains("merge_when_green") && script.contains("MERGE_IGNORE_CHECK:-merge when green"), "waits for every check but its own");
+        assert!(file("own-runners-guard.yml").contains("\"Auto-merge\""));
     }
 
     #[test]
