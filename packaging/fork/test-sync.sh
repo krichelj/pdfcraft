@@ -28,6 +28,24 @@ git -C "$T/fork" fetch -q "$SRC" "$fork_rev" "+refs/tags/*:refs/tags/*"
 git -C "$T/fork" reset -q --hard FETCH_HEAD
 git -C "$T/fork" checkout -q -B main
 
+# One xtask binary for every clone: `cargo xtask` in a clone would rebuild it (a new path), and the
+# clones' builds would queue on one build directory. xtask reads its checkout from
+# CARGO_MANIFEST_DIR at run time (gates::root), so the shim points it at the clone it runs in.
+(cd "$SRC" && cargo build -q -p xtask)
+XTASK_BIN="$CARGO_TARGET_DIR/debug/xtask"
+REAL_CARGO="$(command -v cargo)"
+mkdir -p "$T/bin"
+cat >"$T/bin/cargo" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = xtask ]; then
+  shift
+  CARGO_MANIFEST_DIR="\$(git rev-parse --show-toplevel)/xtask" exec "$XTASK_BIN" "\$@"
+fi
+exec "$REAL_CARGO" "\$@"
+EOF
+chmod +x "$T/bin/cargo"
+export PATH="$T/bin:$PATH"
+
 # Usage: upstream <name>; then commit into "$T/up-<name>" with up <name> <git args…>.
 upstream() {
   git init -q -b main "$T/up-$1"
@@ -45,8 +63,11 @@ sync() {
   local d="$T/s-$1" rc=0
   git clone -q "$T/fork" "$d"
   if [ -n "${2:-}" ]; then (cd "$d" && eval "$2"); fi
-  (cd "$d" && SYNC_DRY_RUN=1 SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$1" bash packaging/fork/sync-upstream.sh) >"$d.out" 2>&1 || rc=$?
-  echo "$rc" >"$d.rc"
+  # In the background: the cases run side by side (`wait` below).
+  (
+    cd "$d" && SYNC_DRY_RUN=1 SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$1" bash packaging/fork/sync-upstream.sh >"$d.out" 2>&1 || rc=$?
+    echo "$rc" >"$d.rc"
+  ) &
 }
 check() {
   if "${@:2}"; then pass=$((pass + 1)); else
@@ -62,23 +83,16 @@ version_is() { grep -q "^version = \"$2\"" "$T/s-$1/Cargo.toml"; }
 notes_ok() { (cd "$T/s-$1" && cargo xtask fork-notes check "$2" --commit HEAD --upstream refs/fork-notes/upstream >/dev/null 2>&1); }
 assets_ok() { (cd "$T/s-$1" && cargo xtask assets >/dev/null 2>&1); }
 
+# Every sync case is set up and started first; they run side by side, then are checked.
 # 1. Nothing new upstream.
 upstream none
 sync none
-check "nothing new: does nothing" ok none
-check "  and says so" said none "nothing to do"
 
 # 2. An ordinary upstream change.
 upstream plain
 echo "upstream note" >>"$T/up-plain/NOTICE"
 up plain commit -qam "upstream: an ordinary change"
 sync plain
-check "an upstream change is merged" ok plain
-check "  with the change in the tree" grep -q "upstream note" "$T/s-plain/NOTICE"
-check "  the fork's next patch version, $next" version_is plain "$next"
-check "  and its record, which passes, naming the commit" notes_ok plain "$next"
-check "  the record lists the upstream commit" grep -q "upstream: an ordinary change" "$T/s-plain/docs/fork/releases/v$next.md"
-check "  assets still check out" assets_ok plain
 
 # 3. Upstream adds a workflow for another platform or GitHub's runners.
 upstream wf
@@ -86,9 +100,6 @@ printf 'name: X\non: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n
 up wf add -A
 up wf commit -qm "upstream: a workflow the fork doesn't run"
 sync wf
-check "a new upstream workflow: merged" ok wf
-check "  and removed" bash -c "! test -e '$T/s-wf/.github/workflows/x.yml'"
-check "  the fork's workflows stay" in_tree wf .github/workflows/sync-upstream.yml
 
 # 4. Upstream moves its version: the fork's line restarts at <new base>-p1.
 upstream bump
@@ -97,9 +108,6 @@ old=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' "$T/up-bump/Cargo.toml" | head -1
 sed -i "s/\"$old\"/\"9.9.0\"/g" "$T/up-bump/Cargo.toml"
 up bump commit -qam "upstream: release 9.9.0"
 sync bump
-check "an upstream version bump: merged" ok bump
-check "  the fork version restarts at 9.9.0-p1" version_is bump "9.9.0-p1"
-check "  and its record passes" notes_ok bump "9.9.0-p1"
 
 # 5. Upstream adds to a translation catalog the fork also changed: the hash lines conflict.
 upstream cat
@@ -109,10 +117,6 @@ awk -v h="$h" '$0 == "path = \"crates/ui-egui/src/i18n/ja.tsv\"" { w = 1 } w && 
   "$T/up-cat/ATTRIBUTION.toml" >"$T/a" && mv "$T/a" "$T/up-cat/ATTRIBUTION.toml"
 up cat commit -qam "upstream: a new string"
 sync cat
-check "catalog hash conflict: merged" ok cat
-check "  with upstream's string" grep -q "An upstream string" "$T/s-cat/crates/ui-egui/src/i18n/ja.tsv"
-check "  and the fork's strings" grep -q "Install and relaunch" "$T/s-cat/crates/ui-egui/src/i18n/ja.tsv"
-check "  and every hash right" assets_ok cat
 
 # 5b. Upstream adds to deny.toml where the fork did: upstream's policy is taken if the tree passes it.
 upstream deny
@@ -120,24 +124,45 @@ sed -i '/RUSTSEC-2024-0370/a\    { id = "RUSTSEC-2099-0001", reason = "upstream 
 up deny commit -qam "upstream: a dependency policy change"
 # The fork adds an entry at the same place, so the two always conflict, whatever both files hold.
 sync deny "sed -i '/RUSTSEC-2024-0370/a\\    { id = \"RUSTSEC-2099-0002\", reason = \"fork test entry\" },' deny.toml && git commit -qam 'Fork: a deny entry'"
-check "deny.toml conflict: merged" ok deny
-check "  with upstream's entry" grep -q "RUSTSEC-2099-0001" "$T/s-deny/deny.toml"
-check "  and the fork's entry is kept or upstream's policy passes alone" grep -q "RUSTSEC-2026-0371" "$T/s-deny/deny.toml"
-check "  checked by cargo deny" said deny "cargo deny passes"
 
 # 6. Upstream edits a line of code the fork changed: a person decides.
 upstream code
 sed -i 's#^pub const RELEASES_PAGE: &str = .*#pub const RELEASES_PAGE: \&str = "https://example.com/upstream";#' "$T/up-code/crates/ui-egui/src/updates.rs"
 up code commit -qam "upstream: change the releases page"
 sync code
-check "a code conflict stops the sync" stopped code "conflicts that need a person"
-check "  naming the file" said code "crates/ui-egui/src/updates.rs"
 
 # 7. Upstream edits the fork's own workflow where the fork changed it.
 upstream ownwf
 sed -i 's/^name: CI$/name: CI (upstream)/; s/runs-on: \[self-hosted, linux\]/runs-on: ubuntu-latest/' "$T/up-ownwf/.github/workflows/ci.yml"
 up ownwf commit -qam "upstream: CI on GitHub's runners"
 sync ownwf
+
+wait
+
+check "nothing new: does nothing" ok none
+check "  and says so" said none "nothing to do"
+check "an upstream change is merged" ok plain
+check "  with the change in the tree" grep -q "upstream note" "$T/s-plain/NOTICE"
+check "  the fork's next patch version, $next" version_is plain "$next"
+check "  and its record, which passes, naming the commit" notes_ok plain "$next"
+check "  the record lists the upstream commit" grep -q "upstream: an ordinary change" "$T/s-plain/docs/fork/releases/v$next.md"
+check "  assets still check out" assets_ok plain
+check "a new upstream workflow: merged" ok wf
+check "  and removed" bash -c "! test -e '$T/s-wf/.github/workflows/x.yml'"
+check "  the fork's workflows stay" in_tree wf .github/workflows/sync-upstream.yml
+check "an upstream version bump: merged" ok bump
+check "  the fork version restarts at 9.9.0-p1" version_is bump "9.9.0-p1"
+check "  and its record passes" notes_ok bump "9.9.0-p1"
+check "catalog hash conflict: merged" ok cat
+check "  with upstream's string" grep -q "An upstream string" "$T/s-cat/crates/ui-egui/src/i18n/ja.tsv"
+check "  and the fork's strings" grep -q "Install and relaunch" "$T/s-cat/crates/ui-egui/src/i18n/ja.tsv"
+check "  and every hash right" assets_ok cat
+check "deny.toml conflict: merged" ok deny
+check "  with upstream's entry" grep -q "RUSTSEC-2099-0001" "$T/s-deny/deny.toml"
+check "  and the fork's entry is kept or upstream's policy passes alone" grep -q "RUSTSEC-2026-0371" "$T/s-deny/deny.toml"
+check "  checked by cargo deny" said deny "cargo deny passes"
+check "a code conflict stops the sync" stopped code "conflicts that need a person"
+check "  naming the file" said code "crates/ui-egui/src/updates.rs"
 check "an upstream edit of the fork's own workflow: merged" ok ownwf
 check "  keeping the fork's version" bash -c "grep -q '^name: CI$' '$T/s-ownwf/.github/workflows/ci.yml' && ! grep -q ubuntu-latest '$T/s-ownwf/.github/workflows/ci.yml'"
 check "  and the record says so" grep -q "upstream's changes to ci.yml were not taken" "$T/s-ownwf/docs/fork/releases/v$next.md"

@@ -41,6 +41,10 @@ jobs:
       # is the limit past 64. The rest of the host stays free for the jobs running beside this one.
       - name: Saturate host threads (saturate-the-bottleneck)
         run: |
+          # A build directory that persists on the runner host, one per job, so builds are
+          # incremental (a JIT runner's checkout starts empty; rust-cache's upload and download
+          # cost more than they saved). Jobs of the same name queue on cargo's lock.
+          echo "CARGO_TARGET_DIR=$HOME/.cache/ci-target/pdfcraft-${{ github.job }}" >> "$GITHUB_ENV"
           NPROC=$(nproc)
           JOBS=$(( NPROC * 9 / 10 ))
           BUILD_JOBS_CAP=64
@@ -50,6 +54,9 @@ jobs:
             echo "CARGO_BUILD_JOBS=${BUILD_JOBS}"
             echo "RAYON_NUM_THREADS=${JOBS}"
             echo "RUST_TEST_THREADS=${JOBS}"
+            # nextest's own setting: the whole suite took 6.9 s here at 90% of the threads, 7.4 s at
+            # 128 and 8.6 s at 64 (2026-10-18), so tests take all of it; builds stay at the cap.
+            echo "NEXTEST_TEST_THREADS=${JOBS}"
           } >> "$GITHUB_ENV"
 
       # The optional craft-fonts build input (Japanese fonts), so the Japanese font tests run on
@@ -80,9 +87,6 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          cache-bin: false
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -108,12 +112,6 @@ jobs:
       # the Release workflow refuses one without it, so the PR that bumps the version does too.
       - name: Fork release notes
         run: cargo xtask fork-notes pending
-
-      # The daily sync and the automatic patch releases, run as they are against synthetic upstream
-      # histories (plain change, new workflow, version bump, catalog conflict, code conflict, the
-      # fork's own workflows) and a stand-in gh for merge-when-green.
-      - name: Fork automation (sync and release scenarios)
-        run: packaging/fork/test-sync.sh
 
       - name: Layering
         if: runner.os == 'Linux'
@@ -142,6 +140,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Saturate host threads (saturate-the-bottleneck)
         run: |
+          # A build directory that persists on the runner host, one per job, so builds are
+          # incremental (a JIT runner's checkout starts empty; rust-cache's upload and download
+          # cost more than they saved). Jobs of the same name queue on cargo's lock.
+          echo "CARGO_TARGET_DIR=$HOME/.cache/ci-target/pdfcraft-${{ github.job }}" >> "$GITHUB_ENV"
           NPROC=$(nproc)
           JOBS=$(( NPROC * 9 / 10 ))
           # Builds stop at BUILD_JOBS_CAP, as in the test job (no faster past 64 jobs). No
@@ -152,10 +154,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: fuzz
-          cache-bin: false
       - name: Fetch the pdf.js corpus (seeds)
         run: cargo xtask corpus
       - name: Fuzz

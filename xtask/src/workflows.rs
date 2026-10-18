@@ -4,12 +4,13 @@
 #[cfg(test)]
 mod tests {
     const CI: &str = include_str!("../../.github/workflows/ci.yml");
-    const ALL: [(&str, &str); 5] = [
+    const ALL: [(&str, &str); 6] = [
         ("ci.yml", CI),
         ("release.yml", include_str!("../../.github/workflows/release.yml")),
         ("packaging-lint.yml", include_str!("../../.github/workflows/packaging-lint.yml")),
         ("own-runners-guard.yml", include_str!("../../.github/workflows/own-runners-guard.yml")),
         ("sync-upstream.yml", include_str!("../../.github/workflows/sync-upstream.yml")),
+        ("fork-automation.yml", include_str!("../../.github/workflows/fork-automation.yml")),
     ];
 
     fn file(name: &str) -> &'static str {
@@ -122,8 +123,11 @@ mod tests {
         assert!(script.contains("cargo xtask fork-notes check"), "and with its release record");
         let guard = file("own-runners-guard.yml");
         assert!(guard.contains("\"Sync upstream\""), "the guard watches it");
-        let test = jobs(CI).into_iter().find(|(n, _)| n == "test").expect("ci.yml test job").1;
-        assert!(test.contains("run: packaging/fork/test-sync.sh"), "its scenarios run on every PR");
+        let scenarios = file("fork-automation.yml");
+        assert!(
+            scenarios.contains("packaging/fork/test-sync.sh") && scenarios.contains("\"packaging/fork/**\""),
+            "its scenarios run on PRs that change it"
+        );
     }
 
     #[test]
@@ -157,7 +161,7 @@ mod tests {
     fn each_check_runs_once_where_it_belongs() {
         // PRs carry the checks; only Release runs on a push (to main); the guard checks each other
         // run once, when it completes (the owner, 2026-10-16: no duplicate runs).
-        for name in ["ci.yml", "packaging-lint.yml", "own-runners-guard.yml", "sync-upstream.yml"] {
+        for name in ["ci.yml", "packaging-lint.yml", "own-runners-guard.yml", "sync-upstream.yml", "fork-automation.yml"] {
             assert!(!file(name).contains("\n  push:"), "{name} runs on pushes too: its PR run already covers them");
         }
         assert!(file("ci.yml").contains("\n  pull_request:") && file("packaging-lint.yml").contains("\n  pull_request:"));
