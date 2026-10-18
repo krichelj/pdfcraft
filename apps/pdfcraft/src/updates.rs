@@ -3,17 +3,29 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use pdfcraft_ui_egui::updates::{RELEASES_PAGE, Release};
+use pdfcraft_ui_egui::updates::{RELEASES_PAGE, Release, UPSTREAM_RELEASES_PAGE};
 
 // The fork's releases (krichelj/pdfcraft), not upstream's: see `RELEASES_PAGE`. The page, not
 // the REST API: GitHub allows 60 anonymous API requests an hour per address, which everyone on a
 // campus or office network shares and runs out of; the page's redirect to the latest release's tag
 // has no such quota. packaging/macos/install.sh finds the release the same way.
 const LATEST: &str = "https://github.com/krichelj/pdfcraft/releases/latest";
+/// The original PdfCraft's latest release: the fork follows it, so a newer one there is news too.
+const UPSTREAM_LATEST: &str = "https://github.com/storytold/pdfcraft/releases/latest";
 
-/// The latest release, from where [`LATEST`] redirects. The answer is untrusted: only a tag page
-/// under [`RELEASES_PAGE`] counts, and anything else is "no release found".
+/// The newest release of the fork and of the original repository (Help ▸ Check for updates).
+/// One repository not answering still gives the other's; both failing gives the fork's error.
 pub fn latest_release() -> Result<Release, String> {
+    match (latest_from(LATEST, RELEASES_PAGE, true), latest_from(UPSTREAM_LATEST, UPSTREAM_RELEASES_PAGE, false)) {
+        (Ok(fork), Ok(upstream)) => Ok(Release::newest(fork, upstream)),
+        (Ok(one), Err(_)) | (Err(_), Ok(one)) => Ok(one),
+        (Err(e), Err(_)) => Err(e),
+    }
+}
+
+/// The release `latest` (a `releases/latest` page) redirects to. The answer is untrusted: only a
+/// tag page under `page` counts, and anything else is "no release found".
+fn latest_from(latest: &str, page: &str, from_fork: bool) -> Result<Release, String> {
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
         .tls_config(ureq::tls::TlsConfig::builder().root_certs(os_roots()?).build())
@@ -22,7 +34,7 @@ pub fn latest_release() -> Result<Release, String> {
         .build()
         .new_agent();
     let response = agent
-        .get(LATEST)
+        .get(latest)
         .header("User-Agent", concat!("PdfCraft/", env!("CARGO_PKG_VERSION")))
         // Read error statuses ourselves: a 403 or 429 means GitHub is limiting requests, and the
         // retry time may ride along in a response header.
@@ -40,18 +52,18 @@ pub fn latest_release() -> Result<Release, String> {
         return Err(format!("couldn't reach GitHub (http status: {status})"));
     }
     let location = response.headers().get("location").and_then(|v| v.to_str().ok()).ok_or("no release found")?;
-    from_location(location)
+    from_location(location, page, from_fork)
 }
 
 /// The release a `releases/latest` redirect points at, `RELEASES_PAGE/tag/<tag>`. Anything else
 /// (the release list, when there is no release yet, or another site) is no release.
-fn from_location(location: &str) -> Result<Release, String> {
+fn from_location(location: &str, page: &str, from_fork: bool) -> Result<Release, String> {
     let tag = location
-        .strip_prefix(RELEASES_PAGE)
+        .strip_prefix(page)
         .and_then(|rest| rest.strip_prefix("/tag/"))
         .filter(|t| !t.is_empty() && t.len() <= 64 && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
         .ok_or("no release found")?;
-    Ok(Release { version: tag.to_string(), url: location.to_string() })
+    Ok(Release { version: tag.to_string(), url: location.to_string(), from_fork })
 }
 
 /// The certificate authorities the operating system trusts.
@@ -159,8 +171,11 @@ mod tests {
 
     #[test]
     fn the_latest_release_is_read_from_the_redirect_and_only_from_our_tag_pages() {
-        let r = from_location("https://github.com/krichelj/pdfcraft/releases/tag/v0.8.0-p1").unwrap();
-        assert_eq!(r, Release { version: "v0.8.0-p1".into(), url: "https://github.com/krichelj/pdfcraft/releases/tag/v0.8.0-p1".into() });
+        let r = from_location("https://github.com/krichelj/pdfcraft/releases/tag/v0.8.0-p1", RELEASES_PAGE, true).unwrap();
+        assert_eq!(
+            r,
+            Release { version: "v0.8.0-p1".into(), url: "https://github.com/krichelj/pdfcraft/releases/tag/v0.8.0-p1".into(), from_fork: true }
+        );
         for elsewhere in [
             "https://github.com/krichelj/pdfcraft/releases",
             "https://github.com/krichelj/pdfcraft/releases/tag/",
@@ -172,8 +187,27 @@ mod tests {
             "javascript:alert(1)",
             "",
         ] {
-            assert_eq!(from_location(elsewhere), Err("no release found".to_string()), "{elsewhere}");
+            assert_eq!(from_location(elsewhere, RELEASES_PAGE, true), Err("no release found".to_string()), "{elsewhere}");
         }
+    }
+
+    #[test]
+    fn the_newer_of_the_two_repositories_is_offered() {
+        let fork = |v: &str| Release { version: v.into(), url: format!("{RELEASES_PAGE}/tag/{v}"), from_fork: true };
+        let up = |v: &str| Release { version: v.into(), url: format!("{UPSTREAM_RELEASES_PAGE}/tag/{v}"), from_fork: false };
+        // Upstream released a new version the fork hasn't synced yet: point at upstream's.
+        assert_eq!(Release::newest(fork("v0.8.0-p9"), up("v0.9.0")), up("v0.9.0"));
+        // The fork's -p<N> builds on it, so once synced the fork's wins.
+        assert_eq!(Release::newest(fork("v0.9.0-p1"), up("v0.9.0")), fork("v0.9.0-p1"));
+        assert_eq!(Release::newest(fork("v0.9.0-p1"), up("v0.8.0")), fork("v0.9.0-p1"));
+        // An upstream tag that isn't a version never wins.
+        assert_eq!(Release::newest(fork("v0.9.0-p1"), up("nightly")), fork("v0.9.0-p1"));
+        let r = from_location("https://github.com/storytold/pdfcraft/releases/tag/v0.9.0", UPSTREAM_RELEASES_PAGE, false).unwrap();
+        assert!(!r.from_fork && r.version == "v0.9.0");
+        assert!(
+            from_location("https://github.com/storytold/pdfcraft/releases/tag/v0.9.0", RELEASES_PAGE, true).is_err(),
+            "each page only from its own repository"
+        );
     }
 
     /// A temporary folder holding `PdfCraft.app/Contents/{MacOS/PdfCraft, Resources/install.sh}`.
@@ -249,6 +283,7 @@ mod tests {
     fn github_answers_with_the_latest_release() {
         let r = latest_release().unwrap();
         assert!(pdfcraft_ui_egui::updates::is_newer(&r.version, "0.0.0"), "{r:?}");
-        assert!(r.url.starts_with(RELEASES_PAGE), "{r:?}");
+        let page = if r.from_fork { RELEASES_PAGE } else { UPSTREAM_RELEASES_PAGE };
+        assert!(r.url.starts_with(page), "the release page of the repository it came from: {r:?}");
     }
 }

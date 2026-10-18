@@ -27,6 +27,11 @@ if git diff --quiet "$tag" HEAD -- . ':(exclude)docs/fork/releases'; then
   echo "bump: nothing changed since $tag"
   exit 0
 fi
+# Behind a newer upstream release, the next release is the sync's <its version>-p1, not -p<N+1>.
+if [ "${BUMP_SKIP_UPSTREAM_CHECK:-}" != 1 ] && ! cargo xtask version check-upstream >/dev/null 2>&1; then
+  echo "bump: upstream released a newer version; the sync releases it as <version>-p1"
+  exit 0
+fi
 level="${current##*-p}"
 case "$level" in "" | *[!0-9]*) die "the fork version $current has no -p<N>" ;; esac
 next="${current%%-*}-p$((level + 1))"

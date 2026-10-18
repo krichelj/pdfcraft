@@ -160,6 +160,49 @@ fn set_version(root: &Path, path: &Path, text: &str, new: &str) -> Result<(), St
     Ok(())
 }
 
+/// storytold/pdfcraft's latest release, whose tag its releases page redirects to (no API quota).
+pub const UPSTREAM_LATEST: &str = "https://github.com/storytold/pdfcraft/releases/latest";
+
+/// (major, minor, patch) of `0.9.0`, `v0.9.0` or `0.9.0-p3`; `None` for other shapes.
+fn core(v: &str) -> Option<(u64, u64, u64)> {
+    let v = v.trim().trim_start_matches('v');
+    let v = v.split(['-', '+']).next()?;
+    let mut parts = v.split('.').map(|p| p.parse::<u64>().ok());
+    let c = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(c)
+}
+
+/// The gate on the fork's version line (CLAUDE.md): `fork` must be `<X.Y.Z>-p<N>` (N >= 1) built on
+/// top of upstream's releases, so X.Y.Z is at least `upstream`, storytold/pdfcraft's latest release.
+pub fn check_upstream(fork: &str, upstream: &str) -> Result<(), String> {
+    let (base, level) = fork.split_once("-p").ok_or_else(|| format!("{fork} is not a fork version <X.Y.Z>-p<N>"))?;
+    let fork_core = core(base).filter(|_| !base.contains('-')).ok_or_else(|| format!("{fork} is not a fork version <X.Y.Z>-p<N>"))?;
+    let n: u64 = level.parse().map_err(|_| format!("{fork}: -p{level} is not a patchlevel"))?;
+    if n == 0 {
+        return Err(format!("{fork}: patchlevels start at -p1"));
+    }
+    let up = core(upstream).ok_or_else(|| format!("upstream release {upstream} is not a version"))?;
+    if fork_core < up {
+        return Err(format!(
+            "{fork} is built on {base}, older than upstream's release {}: sync upstream (Sync upstream workflow) so the fork is {}-p1 or later",
+            upstream.trim_start_matches('v'),
+            upstream.trim_start_matches('v')
+        ));
+    }
+    println!("version: {fork} is on top of upstream's {upstream}");
+    Ok(())
+}
+
+/// storytold/pdfcraft's latest release tag, asked of GitHub with curl.
+fn latest_upstream_release() -> Result<String, String> {
+    let out = std::process::Command::new("curl")
+        .args(["-fsSI", "-o", "/dev/null", "-w", "%{redirect_url}", UPSTREAM_LATEST])
+        .output()
+        .map_err(|e| format!("running curl: {e}"))?;
+    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    url.rsplit_once("/tag/").map(|(_, t)| t.to_string()).filter(|t| core(t).is_some()).ok_or_else(|| format!("no upstream release found ({url})"))
+}
+
 pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
     let path = root.join("Cargo.toml");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
@@ -194,13 +237,29 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
             set_version(root, &path, &text, &new)
         }
         ["set", new] => set_version(root, &path, &text, new),
-        _ => Err("usage: cargo xtask version [base | set X.Y.Z[-pre] | fork [tag] | bump-fork [tag]]".into()),
+        ["check-upstream"] => check_upstream(&read(&text)?, &latest_upstream_release()?),
+        ["check-upstream", tag] => check_upstream(&read(&text)?, tag),
+        _ => Err("usage: cargo xtask version [base | set X.Y.Z[-pre] | fork [tag] | bump-fork [tag] | check-upstream [vX.Y.Z]]".into()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fork_version_must_sit_on_top_of_upstreams_latest_release() {
+        check_upstream("0.9.0-p1", "v0.9.0").unwrap();
+        check_upstream("0.9.0-p7", "v0.9.0").unwrap();
+        check_upstream("0.9.1-p1", "v0.9.0").unwrap();
+        check_upstream("1.0.0-p2", "0.9.9").unwrap();
+        let behind = check_upstream("0.8.0-p9", "v0.9.0").unwrap_err();
+        assert!(behind.contains("older than upstream's release 0.9.0") && behind.contains("0.9.0-p1"), "{behind}");
+        for bad in ["0.9.0", "0.9.0-p0", "0.9.0-rc.1", "0.9.0-px", "0.9-p1", "0.9.0-rc-p1"] {
+            assert!(check_upstream(bad, "v0.9.0").is_err(), "{bad}");
+        }
+        assert!(check_upstream("0.9.0-p1", "nightly").is_err());
+    }
 
     const MANIFEST: &str = "[workspace]\nmembers = [\"a\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace.dependencies]\nfoo = { version = \"1\" }\n";
 

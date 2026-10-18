@@ -26,7 +26,7 @@ environment, which deploys only from the `release` branch.
 4. Push to `origin main`.
 
 ## Fork rule: upstream syncs and releases run themselves
-- **Sync upstream** (`.github/workflows/sync-upstream.yml`, daily 06:00 UTC and on demand) runs
+- **Sync upstream** (`.github/workflows/sync-upstream.yml`, hourly and on demand) runs
   `packaging/fork/sync-upstream.sh`. It merges storytold/pdfcraft main on a `sync/upstream-<sha>`
   branch, keeps only the fork's workflows, bumps the version (`<base>-p<N+1>`, or `<new base>-p1`)
   and writes the release record listing the upstream commits. It then opens the PR, waits for its
@@ -42,6 +42,9 @@ environment, which deploys only from the `release` branch.
   back and checks it: the app, the Applications link, arm64, the signature and the version.
 
 ## Fork rule: Orthogonal fork versioning (`<upstream>-p<N>`)
+**Gate:** `cargo xtask version check-upstream` refuses a fork version that is not `<X.Y.Z>-p<N>`
+with X.Y.Z at least storytold/pdfcraft's latest release. The sync proves it after merging, and
+Release refuses to publish without it.
 **IRONCLAD (owner, 2026-10-10): All releases and builds in this fork must use an orthogonal downstream patchlevel tag extending upstream's base version.**
 - **Format**: `<base>-p<N>` (e.g. `0.6.0-p1`, `0.6.0-p2`). Follows standard open-source patchlevel conventions and SemVer 2.0.0 Rule 9 without personal developer handles.
 - **Single Source of Truth**: Managed exclusively via `cargo xtask version`:

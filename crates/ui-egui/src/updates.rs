@@ -18,13 +18,31 @@ use crate::{PdfCraftApp, theme, widgets};
 /// Silicon builds are the ones this app updates to (CLAUDE.md, fork rules).
 pub const RELEASES_PAGE: &str = "https://github.com/krichelj/pdfcraft/releases";
 
+/// Where the original PdfCraft (storytold/pdfcraft) lists its releases: Check for updates offers one
+/// of these when it is newer than the fork's latest, which follows within the hour (as <it>-p1).
+pub const UPSTREAM_RELEASES_PAGE: &str = "https://github.com/storytold/pdfcraft/releases";
+
 /// The latest published release.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Release {
     /// Its version tag, such as `v0.2.0`.
     pub version: String,
-    /// Its page on [`RELEASES_PAGE`], where the downloads are.
+    /// Its page on [`RELEASES_PAGE`] or [`UPSTREAM_RELEASES_PAGE`], where the downloads are.
     pub url: String,
+    /// A release of this fork, which Install and relaunch can install; an upstream release is
+    /// offered for download from its page (installing it would replace the fork's build).
+    pub from_fork: bool,
+}
+
+impl Release {
+    /// The newer of two releases (`is_newer`); the fork's on a tie, since `-p<N>` builds on it.
+    pub fn newest(a: Release, b: Release) -> Release {
+        if is_newer(&b.version, a.version.trim_start_matches(['v', 'V'])) && !is_newer(&a.version, b.version.trim_start_matches(['v', 'V'])) {
+            b
+        } else {
+            a
+        }
+    }
 }
 
 /// Asks for the latest release (blocking; it runs on its own thread).
@@ -207,7 +225,7 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 };
                 ui.label(egui::RichText::new(crate::i18n::fmt(how, &[("c", current)])).color(t.text_muted));
                 download = Some(r.url.clone());
-                if can_install {
+                if can_install && r.from_fork {
                     installable = Some(r.version.clone());
                 }
                 if let Some(e) = &app.updates.install_error {
