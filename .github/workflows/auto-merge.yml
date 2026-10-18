@@ -7,22 +7,33 @@ name: Auto-merge
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
+  # A check finishing (a re-run that now passes, say) is another chance to merge.
+  workflow_run:
+    workflows: ["CI", "Packaging lint", "Fork automation"]
+    types: [completed]
 
 permissions:
   contents: read
 
 concurrency:
-  group: auto-merge-${{ github.event.pull_request.number }}
+  group: auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: true
 
 jobs:
   merge:
     name: merge when green
     if: >-
-      !github.event.pull_request.draft
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && !startsWith(github.event.pull_request.head.ref, 'sync/upstream-')
-      && !startsWith(github.event.pull_request.head.ref, 'release/v')
+      (github.event_name == 'pull_request'
+        && !github.event.pull_request.draft
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && !startsWith(github.event.pull_request.head.ref, 'sync/upstream-')
+        && !startsWith(github.event.pull_request.head.ref, 'release/v'))
+      || (github.event_name == 'workflow_run'
+        && github.event.workflow_run.event == 'pull_request'
+        && github.event.workflow_run.head_repository.full_name == github.repository
+        && github.event.workflow_run.pull_requests[0].number
+        && !startsWith(github.event.workflow_run.head_branch, 'sync/upstream-')
+        && !startsWith(github.event.workflow_run.head_branch, 'release/v'))
     runs-on: [self-hosted, linux]
     timeout-minutes: 150
     steps:
@@ -35,5 +46,5 @@ jobs:
             || { echo "::error::the runner host's gh login lacks the workflow scope: see own-ci-runners"; exit 1; }
       - name: Merge once every check has passed
         env:
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
         run: packaging/fork/auto-merge.sh "$PR"

@@ -24,7 +24,7 @@ merge_when_green() {
   deadline=$(($(date +%s) + timeout))
   while :; do
     # shellcheck disable=SC2016 # a jq program, not shell
-    state=$(gh api "repos/$REPO/commits/$head/check-runs?per_page=100" --jq '
+    state=$(gh api "repos/$REPO/commits/$head/check-runs?per_page=100&filter=latest" --jq '
       [.check_runs[] | select(.name != env.MERGE_IGNORE_CHECK) | {name, status, conclusion}] as $r
       | if ($r | map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")) | length) > 0 then "FAILURE"
         elif ($r | map(select(.name == "test (shared code)" and .conclusion == "success")) | length) > 0

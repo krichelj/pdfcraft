@@ -175,6 +175,8 @@ mod tests {
     fn a_pr_whose_checks_all_pass_is_merged() {
         let wf = file("auto-merge.yml");
         assert!(wf.contains("types: [opened, reopened, synchronize, ready_for_review]"));
+        assert!(wf.contains("workflows: [\"CI\", \"Packaging lint\", \"Fork automation\"]"), "and again whenever a check finishes");
+        assert!(include_str!("../../packaging/fork/lib.sh").contains("&filter=latest"), "only each check's latest attempt counts");
         assert!(wf.contains("run: packaging/fork/auto-merge.sh \"$PR\"") && wf.contains("persist-credentials: false"));
         assert!(
             wf.contains("!github.event.pull_request.draft") && wf.contains("head.repo.full_name == github.repository"),
