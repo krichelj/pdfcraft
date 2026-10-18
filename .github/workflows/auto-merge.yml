@@ -1,0 +1,39 @@
+# A PR from this repository is merged once every check on it has passed: packaging/fork/auto-merge.sh
+# waits for them (CI's tests must be among them) and merges with the owner's gh login, deleting the
+# branch. A failing check leaves it open. Sync upstream's and the patch releases' PRs merge
+# themselves, and drafts and PRs from other repositories are left alone.
+name: Auto-merge
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  merge:
+    name: merge when green
+    if: >-
+      !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && !startsWith(github.event.pull_request.head.ref, 'sync/upstream-')
+      && !startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check the owner's gh login
+        run: |
+          gh auth status 2>&1 | grep -q 'workflow' \
+            || { echo "::error::the runner host's gh login lacks the workflow scope: see own-ci-runners"; exit 1; }
+      - name: Merge once every check has passed
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: packaging/fork/auto-merge.sh "$PR"

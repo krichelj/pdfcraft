@@ -13,6 +13,8 @@ push_as_owner() {
   git -c credential.helper= -c credential.helper='!gh auth git-credential' push --quiet -u origin "$1"
 }
 
+# MERGE_IGNORE_CHECK names a check left out (the job running this, which is never "completed" while
+# it waits).
 # Usage: merge_when_green <pr> <timeout seconds>. Wait for every check on the PR's head, then merge it
 # (the branch is deleted); a failing check leaves it open. CI's test job must be among them, so a PR
 # whose checks haven't started yet is never "green".
@@ -23,7 +25,7 @@ merge_when_green() {
   while :; do
     # shellcheck disable=SC2016 # a jq program, not shell
     state=$(gh api "repos/$REPO/commits/$head/check-runs?per_page=100" --jq '
-      [.check_runs[] | {name, status, conclusion}] as $r
+      [.check_runs[] | select(.name != env.MERGE_IGNORE_CHECK) | {name, status, conclusion}] as $r
       | if ($r | map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")) | length) > 0 then "FAILURE"
         elif ($r | map(select(.name == "test (shared code)" and .conclusion == "success")) | length) > 0
           and ($r | all(.status == "completed")) then "SUCCESS"

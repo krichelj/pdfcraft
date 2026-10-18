@@ -210,7 +210,7 @@ run_merge() {
     sleep() { :; }
     # shellcheck source=lib.sh
     . "$SRC/packaging/fork/lib.sh"
-    merge_when_green 7 60) >/dev/null 2>&1
+    merge_when_green 7 "${MW_TIMEOUT:-60}") >/dev/null 2>&1
 }
 pending='{"check_runs":[{"name":"test (shared code)","status":"in_progress","conclusion":null}]}'
 green='{"check_runs":[{"name":"test (shared code)","status":"completed","conclusion":"success"},{"name":"lint","status":"completed","conclusion":"success"}]}'
@@ -218,7 +218,11 @@ red='{"check_runs":[{"name":"test (shared code)","status":"completed","conclusio
 other_only='{"check_runs":[{"name":"lint","status":"completed","conclusion":"success"}]}'
 check "merge: waits through pending, merges when green" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; run_merge '$pending' '$pending' '$green' && grep -q 'merged 7' '$T/ghlog'"
 check "merge: a failing check leaves the PR open" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; ! run_merge '$pending' '$red' && ! grep -q merged '$T/ghlog'"
-check "merge: green without CI's test job never merges" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; printf '%s\n' '$other_only' >'$T/states'; ! timeout 5 bash -c '$(declare -f run_merge); T=$T SRC=$SRC; run_merge \"$other_only\"' ; ! grep -q merged '$T/ghlog'"
+check "merge: green without CI's test job never merges" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; ! MW_TIMEOUT=2 run_merge '$other_only' && ! grep -q merged '$T/ghlog'"
+
+self_pending='{"check_runs":[{"name":"test (shared code)","status":"completed","conclusion":"success"},{"name":"merge when green","status":"in_progress","conclusion":null}]}'
+check "auto-merge: its own running check doesn't block the merge" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; MERGE_IGNORE_CHECK='merge when green' run_merge '$self_pending' && grep -q 'merged 7' '$T/ghlog'"
+check "  but without that exemption it never counts as green" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; ! MW_TIMEOUT=2 run_merge '$self_pending' && ! grep -q merged '$T/ghlog'"
 
 echo "fork automation: $pass passed, $fail failed"
 [ "$fail" = 0 ]
