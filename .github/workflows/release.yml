@@ -84,7 +84,7 @@ jobs:
             echo "skip=false" >>"$GITHUB_OUTPUT"
           fi
       # No release on top of an upstream version older than upstream's latest release (CLAUDE.md):
-      # the hourly sync moves the fork to <new version>-p1 first.
+      # the daily sync moves the fork to <new version>-p1 first.
       - name: Fork version is on top of upstream's latest release
         if: steps.done.outputs.skip != 'true'
         env:

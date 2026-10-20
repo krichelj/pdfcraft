@@ -26,7 +26,7 @@ environment, which deploys only from the `release` branch.
 4. Push to `origin main`.
 
 ## Fork rule: upstream syncs and releases run themselves
-- **Sync upstream** (`.github/workflows/sync-upstream.yml`, hourly and on demand) runs
+- **Sync upstream** (`.github/workflows/sync-upstream.yml`, daily 06:00 UTC and on demand) runs
   `packaging/fork/sync-upstream.sh`. It merges storytold/pdfcraft main on a `sync/upstream-<sha>`
   branch, keeps only the fork's workflows, bumps the version (`<base>-p<N+1>`, or `<new base>-p1`)
   and writes the release record listing the upstream commits. It then opens the PR, waits for its
