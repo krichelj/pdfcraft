@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn upstream_is_synced_daily_and_merged_through_a_checked_pr() {
         let sync = file("sync-upstream.yml");
-        assert!(sync.contains("schedule:") && sync.contains("cron: \"17 * * * *\""), "every hour");
+        assert!(sync.contains("schedule:") && sync.contains("cron: \"0 6 * * *\""), "every day");
         assert!(sync.contains("cargo xtask version check-upstream"), "then proves the version is on top of upstream's release");
         let version = jobs(file("release.yml")).into_iter().find(|(n, _)| n == "version").expect("version job").1;
         assert!(version.contains("cargo xtask version check-upstream"), "and Release refuses a version that isn't");

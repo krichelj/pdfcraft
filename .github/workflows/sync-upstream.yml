@@ -9,9 +9,9 @@ name: Sync upstream
 
 on:
   schedule:
-    # Hourly: a new upstream release reaches the fork (as <its version>-p1) within the hour. A run
-    # with nothing new ends after one fetch.
-    - cron: "17 * * * *"
+    # Daily (the owner's choice): a new upstream release reaches the fork as <its version>-p1 by
+    # the next morning. Run it by hand (workflow_dispatch) to take one sooner.
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 permissions:
