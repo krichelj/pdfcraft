@@ -22,7 +22,7 @@ UPSTREAM_URL="${SYNC_UPSTREAM_URL:-https://github.com/storytold/pdfcraft.git}"
 UPSTREAM_REF=refs/fork-notes/upstream
 REPO=krichelj/pdfcraft
 # The fork's workflows; any other one an upstream merge brings is deleted (CLAUDE.md fork rules).
-FORK_WORKFLOWS="ci.yml own-runners-guard.yml packaging-lint.yml release.yml sync-upstream.yml"
+FORK_WORKFLOWS="ci.yml own-runners-guard.yml packaging-lint.yml release.yml sync-upstream.yml fork-automation.yml auto-merge.yml"
 # shellcheck source=lib.sh
 . "$ROOT/packaging/fork/lib.sh"
 

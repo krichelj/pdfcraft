@@ -188,6 +188,25 @@ mod tests {
     }
 
     #[test]
+    fn the_sync_keeps_every_one_of_the_forks_workflows() {
+        // sync-upstream.sh deletes any workflow not in FORK_WORKFLOWS: a workflow left off it is
+        // deleted by the next upstream merge (fork-automation.yml and auto-merge.yml were).
+        let script = include_str!("../../packaging/fork/sync-upstream.sh");
+        let line = script.lines().find(|l| l.starts_with("FORK_WORKFLOWS=")).expect("FORK_WORKFLOWS in sync-upstream.sh");
+        let listed: Vec<&str> = line.trim_start_matches("FORK_WORKFLOWS=").trim_matches('"').split_whitespace().collect();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows");
+        let mut files: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.ends_with(".yml")).collect();
+        files.sort();
+        for f in &files {
+            assert!(listed.contains(&f.as_str()), "{f} is not in FORK_WORKFLOWS: the next upstream sync deletes it");
+        }
+        for (name, _) in ALL {
+            assert!(files.iter().any(|f| f == name), "{name} is gated here but not in .github/workflows");
+        }
+    }
+
+    #[test]
     fn no_workflow_pins_work_to_one_core() {
         let serial = [
             "-j 1",
