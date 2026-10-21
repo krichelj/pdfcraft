@@ -6,6 +6,7 @@ mod assets;
 mod corpus;
 mod demo_pdf;
 mod fork_notes;
+mod fork_version;
 mod fuzz;
 mod gates;
 mod layers;
@@ -52,7 +53,8 @@ const COMMANDS: &[(&str, &str, Command)] = &[
 
 fn version_cmd(args: &[String]) -> anyhow::Result<()> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    version::run(&gates::root(), &args).map_err(anyhow::Error::msg)
+    let root = gates::root();
+    fork_version::run(&root, &args).unwrap_or_else(|| version::run(&root, &args)).map_err(anyhow::Error::msg)
 }
 
 fn main() -> ExitCode {

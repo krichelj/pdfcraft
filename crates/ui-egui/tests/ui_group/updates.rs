@@ -119,8 +119,8 @@ fn installer(answer: Result<(), &str>) -> (UpdateInstaller, Arc<std::sync::Mutex
     let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
     let log = asked.clone();
     let answer = answer.map_err(str::to_string);
-    let install: UpdateInstaller = Arc::new(move |v: &str| {
-        log.lock().unwrap().push(v.to_string());
+    let install: UpdateInstaller = Arc::new(move |v: &str, from_fork: bool| {
+        log.lock().unwrap().push(if from_fork { v.to_string() } else { format!("{v} from upstream") });
         answer.clone()
     });
     (install, asked)
@@ -234,7 +234,7 @@ fn the_launch_check_is_silent_unless_a_newer_release_exists() {
 }
 
 #[test]
-fn a_newer_upstream_release_is_offered_for_download_not_installed() {
+fn a_newer_upstream_release_is_installed_from_upstream() {
     let (install, asked) = installer(Ok(()));
     let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
         let mut app = PdfCraftApp::new();
@@ -248,7 +248,7 @@ fn a_newer_upstream_release_is_offered_for_download_not_installed() {
     h.state_mut().execute("help.check_updates");
     settle(&mut h);
     h.get_by_label_contains("PdfCraft 99.0.0 is available");
-    assert!(h.query_by_label("Install and relaunch").is_none(), "installing upstream's build would replace the fork's");
-    h.get_by_label("Download");
-    assert!(asked.lock().unwrap().is_empty());
+    h.get_by_label("Install and relaunch").click();
+    h.step();
+    assert_eq!(*asked.lock().unwrap(), ["v99.0.0 from upstream"], "the installer is told it's the original repository's");
 }
