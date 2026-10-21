@@ -51,7 +51,10 @@ pub type UpdateSource = Arc<dyn Fn() -> Result<Release, String> + Send + Sync>;
 /// Starts installing release `version` (a tag such as `v0.8.0-p1`) and returns once it has
 /// started: the installer downloads and checks the release, waits for this app to quit, puts the
 /// new version in its place and opens it. The app quits right after, asking about unsaved work.
-pub type UpdateInstaller = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+///
+/// The flag says where the release is from: this fork (`true`) or the original PdfCraft, whose
+/// own build then replaces the fork's.
+pub type UpdateInstaller = Arc<dyn Fn(&str, bool) -> Result<(), String> + Send + Sync>;
 
 /// Whether release `latest` (a tag such as `v0.2.0`) is newer than version `current` (`0.1.1`).
 /// Pre-release and build suffixes are ignored, except the fork's patchlevel `-p<N>`: `0.8.0-p2`
@@ -169,9 +172,9 @@ impl PdfCraftApp {
 
     /// Install and relaunch: start the installer for `version`, then quit (asking about unsaved
     /// work, like the close button). If the installer can't start, the dialog says why.
-    fn install_update(&mut self, version: &str) {
+    fn install_update(&mut self, version: &str, from_fork: bool) {
         let Some(install) = self.update_installer.clone() else { return };
-        match install(version) {
+        match install(version, from_fork) {
             Ok(()) => {
                 self.updates.open = false;
                 self.updates.install_error = None;
@@ -194,8 +197,8 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let mut close = false;
     let mut download: Option<String> = None;
     // The newer release's tag, when this app can install it itself.
-    let mut installable: Option<String> = None;
-    let mut install: Option<String> = None;
+    let mut installable: Option<(String, bool)> = None;
+    let mut install: Option<(String, bool)> = None;
     let can_install = app.update_installer.is_some();
     let modal = crate::widgets::show_modal(ctx, "updates", |ui| {
         ui.set_width(420.0);
@@ -225,8 +228,8 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 };
                 ui.label(egui::RichText::new(crate::i18n::fmt(how, &[("c", current)])).color(t.text_muted));
                 download = Some(r.url.clone());
-                if can_install && r.from_fork {
-                    installable = Some(r.version.clone());
+                if can_install {
+                    installable = Some((r.version.clone(), r.from_fork));
                 }
                 if let Some(e) = &app.updates.install_error {
                     ui.add_space(6.0);
@@ -256,11 +259,11 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
         ui.label(egui::RichText::new(note).color(t.text_muted).small());
         ui.add_space(12.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if let Some(version) = installable.take() {
+            if let Some(release) = installable.take() {
                 let go = widgets::pill_button(ui, tl!("Install and relaunch"), true).clicked();
                 close = widgets::pill_button(ui, tl!("Later"), false).clicked();
                 download = None;
-                install = go.then_some(version);
+                install = go.then_some(release);
             } else if let Some(url) = download.take() {
                 let get = widgets::pill_button(ui, tl!("Download"), true).clicked();
                 let later = widgets::pill_button(ui, tl!("Later"), false).clicked();
@@ -277,7 +280,7 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
         install = None;
     }
     if let Some(version) = install {
-        app.install_update(&version);
+        app.install_update(&version.0, version.1);
         return;
     }
     if close {

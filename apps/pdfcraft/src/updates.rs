@@ -129,7 +129,7 @@ impl Installer {
 
     /// The installer's command for release `tag` (such as `v0.8.0-p1`), waiting for process `pid`
     /// (this app) to exit before it replaces anything.
-    fn command(&self, tag: &str, pid: u32) -> Result<std::process::Command, String> {
+    fn command(&self, tag: &str, from_fork: bool, pid: u32) -> Result<std::process::Command, String> {
         let version = tag.trim().trim_start_matches(['v', 'V']);
         if version.is_empty() || version.len() > 64 || !version.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-') {
             return Err(format!("`{tag}` is not a release version"));
@@ -137,6 +137,7 @@ impl Installer {
         let mut c = std::process::Command::new("/bin/bash");
         c.arg(&self.script)
             .env("PDFCRAFT_VERSION", version)
+            .env("PDFCRAFT_REPO", if from_fork { "krichelj/pdfcraft" } else { "storytold/pdfcraft" })
             .env("PDFCRAFT_APPS", &self.apps)
             .env("PDFCRAFT_WAIT_PID", pid.to_string())
             .stdin(std::process::Stdio::null());
@@ -144,8 +145,8 @@ impl Installer {
     }
 
     /// Start installing release `tag` in the background; it outlives this app.
-    pub fn start(&self, tag: &str) -> Result<(), String> {
-        let mut c = self.command(tag, std::process::id())?;
+    pub fn start(&self, tag: &str, from_fork: bool) -> Result<(), String> {
+        let mut c = self.command(tag, from_fork, std::process::id())?;
         if let Some(dir) = self.log.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("couldn't create {} ({e})", dir.display()))?;
         }
@@ -244,16 +245,21 @@ mod tests {
     #[test]
     fn the_installer_gets_the_version_folder_and_pid_and_nothing_untrusted() {
         let i = Installer { script: "/A/PdfCraft.app/Contents/Resources/install.sh".into(), apps: "/A".into(), log: "/l/update.log".into() };
-        let c = i.command("v0.8.0-p2", 4242).unwrap();
+        let c = i.command("v0.8.0-p2", true, 4242).unwrap();
         assert_eq!(c.get_program(), "/bin/bash");
         assert_eq!(c.get_args().collect::<Vec<_>>(), ["/A/PdfCraft.app/Contents/Resources/install.sh"]);
         let env: std::collections::HashMap<_, _> =
             c.get_envs().filter_map(|(k, v)| Some((k.to_str()?.to_string(), v?.to_str()?.to_string()))).collect();
         assert_eq!(env["PDFCRAFT_VERSION"], "0.8.0-p2");
+        assert_eq!(env["PDFCRAFT_REPO"], "krichelj/pdfcraft");
+        let up = i.command("v0.10.1", false, 1).unwrap();
+        let up_env: std::collections::HashMap<_, _> =
+            up.get_envs().filter_map(|(k, v)| Some((k.to_str()?.to_string(), v?.to_str()?.to_string()))).collect();
+        assert_eq!(up_env["PDFCRAFT_REPO"], "storytold/pdfcraft", "an upstream release comes from upstream");
         assert_eq!(env["PDFCRAFT_APPS"], "/A");
         assert_eq!(env["PDFCRAFT_WAIT_PID"], "4242");
         for bad in ["", "v", "0.8.0; rm -rf ~", "$(id)", "0.8.0\nx", "../../x", &"9".repeat(65)] {
-            assert!(i.command(bad, 1).is_err(), "{bad:?}");
+            assert!(i.command(bad, true, 1).is_err(), "{bad:?}");
         }
     }
 

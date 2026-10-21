@@ -20,7 +20,10 @@
 #      PDFCRAFT_WAIT_PID   wait for this process to exit instead of quitting PdfCraft
 #      PDFCRAFT_WAIT_SECS  how long to wait for it (default 3600)
 set -euo pipefail
-REPO=krichelj/pdfcraft
+# Where the release comes from: this fork (its zip), or the original PdfCraft (its signed,
+# notarized universal DMG), which Check for updates offers when it is newer.
+REPO="${PDFCRAFT_REPO:-krichelj/pdfcraft}"
+case "$REPO" in krichelj/pdfcraft | storytold/pdfcraft) ;; *) echo "error: PDFCRAFT_REPO must be krichelj/pdfcraft or storytold/pdfcraft" >&2; exit 1 ;; esac
 APPS="${PDFCRAFT_APPS:-/Applications}"
 WAIT_PID="${PDFCRAFT_WAIT_PID:-}"
 die() {
@@ -54,21 +57,41 @@ case "$version" in
 esac
 
 base="https://github.com/$REPO/releases/download/v$version"
-zip="pdfcraft-$version-macos-aarch64.zip"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-echo "==> PdfCraft $version: downloading $zip"
-curl -fSL --progress-bar -o "$work/$zip" "$base/$zip" || die "couldn't download $base/$zip"
+# The release's own checksum list names what it ships for macOS: this fork's Apple silicon zip,
+# else upstream's universal DMG (else an Apple silicon one).
 curl -fsSL -o "$work/SHA256SUMS.txt" "$base/SHA256SUMS.txt" || die "couldn't download $base/SHA256SUMS.txt"
-want="$(awk -v f="$zip" '$2 == f || $2 == "*" f { print $1 }' "$work/SHA256SUMS.txt")"
-[ -n "$want" ] || die "$zip is not listed in SHA256SUMS.txt"
-got="$(shasum -a 256 "$work/$zip" | awk '{ print $1 }')"
-[ "$got" = "$want" ] || die "$zip doesn't match SHA256SUMS.txt (expected $want, got $got)"
+asset=""
+for a in "pdfcraft-$version-macos-aarch64.zip" "pdfcraft-$version-macos-universal.dmg" "pdfcraft-$version-macos-aarch64.dmg"; do
+  if awk -v f="$a" '$2 == f || $2 == "*" f { found = 1 } END { exit !found }' "$work/SHA256SUMS.txt"; then
+    asset="$a"
+    break
+  fi
+done
+[ -n "$asset" ] || die "PdfCraft $version from $REPO lists no macOS app in SHA256SUMS.txt"
+echo "==> PdfCraft $version: downloading $asset from $REPO"
+curl -fSL --progress-bar -o "$work/$asset" "$base/$asset" || die "couldn't download $base/$asset"
+want="$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' "$work/SHA256SUMS.txt")"
+got="$(shasum -a 256 "$work/$asset" | awk '{ print $1 }')"
+[ "$got" = "$want" ] || die "$asset doesn't match SHA256SUMS.txt (expected $want, got $got)"
 
-ditto -x -k "$work/$zip" "$work/unpacked" || die "couldn't unpack $zip"
+mkdir -p "$work/unpacked"
+case "$asset" in
+  *.zip) ditto -x -k "$work/$asset" "$work/unpacked" || die "couldn't unpack $asset" ;;
+  *.dmg)
+    mkdir -p "$work/mnt"
+    hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$work/mnt" "$work/$asset" >/dev/null || die "couldn't open $asset"
+    copied=0
+    ditto "$work/mnt/PdfCraft.app" "$work/unpacked/PdfCraft.app" && copied=1
+    hdiutil detach "$work/mnt" >/dev/null 2>&1 || true
+    [ "$copied" = 1 ] || die "couldn't copy PdfCraft.app out of $asset"
+    ;;
+esac
 new="$work/unpacked/PdfCraft.app"
-[ -x "$new/Contents/MacOS/PdfCraft" ] || die "$zip holds no PdfCraft.app"
+[ -x "$new/Contents/MacOS/PdfCraft" ] || die "$asset holds no PdfCraft.app"
+zip="$asset"
 codesign --verify --strict "$new" || die "the signature of PdfCraft.app in $zip doesn't verify"
 
 # Replace a running copy only once it has quit (it asks about unsaved changes first).

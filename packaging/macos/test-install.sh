@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
 done
 echo "curl $url" >>"$STUB_LOG"
 if [ "$head" = 1 ]; then printf "%s" "$STUB_LATEST"; exit 0; fi
-f="$STUB_SERVE/${url#https://github.com/krichelj/pdfcraft/releases/download/}"
+f="$STUB_SERVE/${url#https://github.com/}"
 [ -f "$f" ] || exit 22
 cp "$f" "$out"'
 stub shasum '[ "$1 $2" = "-a 256" ] || exit 2; sha256sum "$3"'
@@ -45,6 +45,8 @@ stub ditto 'if [ "$1" = -x ]; then mkdir -p "$4"; unzip -q "$3" -d "$4"; else
   cp -a "$1" "$2"; fi'
 stub codesign 'echo "codesign $*" >>"$STUB_LOG"; exit "${STUB_CODESIGN_RC:-0}"'
 stub pgrep 'exit 1'
+# hdiutil attach <...> -mountpoint M IMAGE opens the image at M; detach does nothing.
+stub hdiutil 'if [ "$1" = attach ]; then m=""; img=""; while [ $# -gt 0 ]; do case "$1" in -mountpoint) m="$2"; shift 2 ;; -*) shift ;; attach) shift ;; *) img="$1"; shift ;; esac; done; mkdir -p "$m"; unzip -q "$img" -d "$m"; echo "hdiutil attach $img" >>"$STUB_LOG"; fi'
 for t in osascript xattr open; do stub "$t" "echo \"$t \$*\" >>\"\$STUB_LOG\""; done
 
 # A release v0.8.0-p1 whose app prints "new".
@@ -56,9 +58,16 @@ mkapp() {
 V=0.8.0-p1
 ZIP="pdfcraft-$V-macos-aarch64.zip"
 mkapp "$T/build" new
-mkdir -p "$SERVE/v$V"
-(cd "$T/build" && zip -qry "$SERVE/v$V/$ZIP" PdfCraft.app)
-(cd "$SERVE/v$V" && sha256sum -- * >SHA256SUMS.txt)
+REL="$SERVE/krichelj/pdfcraft/releases/download/v$V"
+mkdir -p "$REL"
+(cd "$T/build" && zip -qry "$REL/$ZIP" PdfCraft.app)
+(cd "$REL" && sha256sum -- * >SHA256SUMS.txt)
+# Upstream's release of the same version: a universal DMG (here a zip the hdiutil stand-in opens).
+UREL="$SERVE/storytold/pdfcraft/releases/download/v$V"
+mkdir -p "$UREL"
+mkapp "$T/ubuild" upstream
+(cd "$T/ubuild" && zip -qry "$UREL/pdfcraft-$V-macos-universal.dmg" PdfCraft.app)
+(cd "$UREL" && sha256sum -- * >SHA256SUMS.txt)
 
 export STUB_SERVE="$SERVE" STUB_LOG="$T/log" PDFCRAFT_NO_OPEN=1
 export STUB_LATEST="https://github.com/krichelj/pdfcraft/releases/tag/v$V"
@@ -105,11 +114,11 @@ check "a pinned version with a v prefix" run pinned ok "$T/apps" PDFCRAFT_VERSIO
 check "  asks nothing about the latest release" bash -c "! grep -q 'releases/latest' '$T/log'"
 
 fresh
-cp "$SERVE/v$V/$ZIP" "$T/good.zip"
-printf 'x' >>"$SERVE/v$V/$ZIP"
+cp "$REL/$ZIP" "$T/good.zip"
+printf 'x' >>"$REL/$ZIP"
 check "refuses a download that doesn't match SHA256SUMS.txt" run checksum refuse "$T/apps"
 check "  and keeps the old copy" app_says "$T/apps" old
-cp "$T/good.zip" "$SERVE/v$V/$ZIP"
+cp "$T/good.zip" "$REL/$ZIP"
 
 fresh
 check "refuses an app whose signature doesn't verify" run codesign refuse "$T/apps" STUB_CODESIGN_RC="1"
@@ -150,16 +159,29 @@ check "  says why in an alert" grep -q '^osascript .*display alert' "$T/log"
 check "  and opens the installed copy again" grep -q "^open $T/apps/PdfCraft.app\$" "$T/log"
 
 fresh
-cp "$SERVE/v$V/$ZIP" "$T/good.zip"
-printf 'x' >>"$SERVE/v$V/$ZIP"
+cp "$REL/$ZIP" "$T/good.zip"
+printf 'x' >>"$REL/$ZIP"
 check "a bad download after Install and relaunch" run relaunch-bad refuse "$T/apps" PDFCRAFT_WAIT_PID=999999999 PDFCRAFT_NO_OPEN=0
-cp "$T/good.zip" "$SERVE/v$V/$ZIP"
+cp "$T/good.zip" "$REL/$ZIP"
 check "  keeps the old copy" app_says "$T/apps" old
 check "  says why in an alert" grep -q '^osascript .*display alert' "$T/log"
 
 fresh
 check "refuses a process id that isn't one" run bad-pid refuse "$T/apps" PDFCRAFT_WAIT_PID="12; rm -rf /"
 check "  and keeps the old copy" app_says "$T/apps" old
+
+# The original PdfCraft's release: its DMG, mounted and copied, checked the same way.
+fresh
+check "an upstream release installs from its DMG" run upstream ok "$T/apps" PDFCRAFT_REPO=storytold/pdfcraft PDFCRAFT_VERSION="$V"
+check "  the upstream app is in place" app_says "$T/apps" upstream
+check "  through the DMG" grep -q "^hdiutil attach .*pdfcraft-$V-macos-universal.dmg" "$T/log"
+fresh
+printf 'x' >>"$UREL/pdfcraft-$V-macos-universal.dmg"
+check "refuses an upstream DMG that doesn't match its SHA256SUMS.txt" run upstream-bad refuse "$T/apps" PDFCRAFT_REPO=storytold/pdfcraft PDFCRAFT_VERSION="$V"
+check "  and keeps the old copy" app_says "$T/apps" old
+fresh
+check "refuses any other repository" run elsewhere refuse "$T/apps" PDFCRAFT_REPO=evil/pdfcraft PDFCRAFT_VERSION="$V"
+check "  before downloading anything" bash -c "! grep -q '^curl' '$T/log'"
 
 echo "install.sh: $pass passed, $fail failed"
 [ "$fail" = 0 ]

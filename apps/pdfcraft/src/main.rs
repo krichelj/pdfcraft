@@ -402,7 +402,7 @@ fn app_creator<'a>(
         if let (Ok(exe), Some(logs)) = (std::env::current_exe(), logs)
             && let Some(installer) = updates::Installer::bundled(&exe, &logs)
         {
-            app.update_installer = Some(std::sync::Arc::new(move |tag: &str| installer.start(tag)));
+            app.update_installer = Some(std::sync::Arc::new(move |tag: &str, from_fork: bool| installer.start(tag, from_fork)));
         }
         // Once per launch, quietly: the Updates dialog opens only when a newer release exists.
         app.check_for_updates_quietly();
