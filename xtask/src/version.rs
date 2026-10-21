@@ -1,12 +1,7 @@
-//! `cargo xtask version [base | set X.Y.Z[-pre] | fork [tag] | bump-fork [tag]]`: workspace versioning.
+//! `cargo xtask version [set X.Y.Z[-pre]]`: the workspace version, the single source of truth.
 //!
 //! The version lives in `[workspace.package] version` in the root `Cargo.toml`; every crate
 //! inherits it with `version.workspace = true`, and the packaging scripts read it from here.
-//! Internal path dependencies in `[workspace.dependencies]` also have their `version = "…"`
-//! requirements kept strictly in sync, ensuring `cargo update --workspace` resolves cleanly.
-//!
-//! For downstream forks, an orthogonal SemVer-compliant patchlevel extension scheme is used:
-//! `<base>-p<N>` (e.g. `0.6.0-p1`, `0.6.0-p2`).
 
 use std::path::Path;
 
@@ -20,55 +15,20 @@ pub fn read(manifest: &str) -> Result<String, String> {
     Ok(v)
 }
 
-/// The upstream base version without any fork or pre-release suffix (e.g. `0.6.0` from `0.6.0-p1`).
-pub fn base_version(v: &str) -> &str {
-    v.split_once('-').map(|(base, _)| base).unwrap_or(v)
-}
-
-/// Construct a fork patchlevel version from the current version and tag prefix (default `"p"`).
-pub fn fork_version(current: &str, tag_prefix: &str) -> Result<String, String> {
-    if tag_prefix.is_empty() || !tag_prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-        return Err(format!("`{tag_prefix}` is not a valid tag prefix (must be alphanumeric or '-')"));
-    }
-    let base = base_version(current);
-    let candidate = format!("{base}-{tag_prefix}1");
-    validate(&candidate)?;
-    Ok(candidate)
-}
-
-/// Bump the fork revision (e.g. `0.6.0-p1` -> `0.6.0-p2`).
-pub fn bump_fork(current: &str, tag_prefix: &str) -> Result<String, String> {
-    if tag_prefix.is_empty() || !tag_prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-        return Err(format!("`{tag_prefix}` is not a valid tag prefix"));
-    }
-    let base = base_version(current);
-    let prefix = format!("{base}-{tag_prefix}");
-    if let Some(rev_str) = current.strip_prefix(&prefix)
-        && let Ok(rev) = rev_str.parse::<u64>()
-    {
-        let next = rev.checked_add(1).ok_or_else(|| format!("`{current}`: patchlevel overflows"))?;
-        let candidate = format!("{prefix}{next}");
-        validate(&candidate)?;
-        return Ok(candidate);
-    }
-    let candidate = format!("{base}-{tag_prefix}1");
-    validate(&candidate)?;
-    Ok(candidate)
-}
-
-/// `manifest` with the workspace version replaced; everything else is byte-for-byte unchanged.
-///
-/// Updates both `[workspace.package] version` and all internal `pdfcraft-*` path-dependency
-/// version pins in `[workspace.dependencies]`.
+/// `manifest` with the workspace version replaced, together with the matching `version` of every
+/// path dependency in `[workspace.dependencies]` (the workspace's own crates, which must agree
+/// with it or `cargo update` refuses them); everything else is byte-for-byte unchanged.
 pub fn replace(manifest: &str, new: &str) -> Result<String, String> {
     validate(new)?;
+    let old = read(manifest)?;
     let (idx, _) = find_line(manifest)?;
-    let mut out = String::with_capacity(manifest.len() + 16);
+    let (old_pin, new_pin) = (format!("version = \"{old}\""), format!("version = \"{new}\""));
+    let mut out = String::with_capacity(manifest.len() + 8);
     let mut in_deps = false;
     for (i, line) in manifest.split_inclusive('\n').enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_deps = trimmed == "[workspace.dependencies]";
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_deps = t == "[workspace.dependencies]";
         }
         if i == idx {
             let eol = if line.ends_with("\r\n") {
@@ -79,19 +39,8 @@ pub fn replace(manifest: &str, new: &str) -> Result<String, String> {
                 ""
             };
             out.push_str(&format!("version = \"{new}\"{eol}"));
-        } else if in_deps && trimmed.starts_with("pdfcraft-") && trimmed.contains("path =") && trimmed.contains("version = \"") {
-            if let Some(pos) = line.find("version = \"") {
-                let start = pos + "version = \"".len();
-                if let Some(end) = line[start..].find('"') {
-                    let mut modified = String::with_capacity(line.len() + new.len());
-                    modified.push_str(&line[..start]);
-                    modified.push_str(new);
-                    modified.push_str(&line[start + end..]);
-                    out.push_str(&modified);
-                    continue;
-                }
-            }
-            out.push_str(line);
+        } else if in_deps && line.contains("path = \"") && line.contains(&old_pin) {
+            out.push_str(&line.replace(&old_pin, &new_pin));
         } else {
             out.push_str(line);
         }
@@ -137,72 +86,6 @@ fn find_line(manifest: &str) -> Result<(usize, &str), String> {
     Err("no `version = \"…\"` in [workspace.package] of the root Cargo.toml".into())
 }
 
-fn set_version(root: &Path, path: &Path, text: &str, new: &str) -> Result<(), String> {
-    let old = read(text)?;
-    let updated = replace(text, new)?;
-    let tmp = root.join("target").join("Cargo.toml.xtask-version");
-    std::fs::create_dir_all(root.join("target")).map_err(|e| format!("create target/: {e}"))?;
-    std::fs::write(&tmp, updated).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("replace {}: {e}", path.display()))?;
-    let cargo_update = |extra: &[&str]| -> Result<(), String> {
-        let st = std::process::Command::new(env!("CARGO"))
-            .current_dir(root)
-            .args(["update", "--workspace"])
-            .args(extra)
-            .status()
-            .map_err(|e| format!("cargo update: {e}"))?;
-        if st.success() { Ok(()) } else { Err(format!("cargo update --workspace {} failed", extra.join(" "))) }
-    };
-    if cargo_update(&["--offline"]).is_err() {
-        cargo_update(&[])?;
-    }
-    println!("version: {old} -> {new}");
-    Ok(())
-}
-
-/// storytold/pdfcraft's latest release, whose tag its releases page redirects to (no API quota).
-pub const UPSTREAM_LATEST: &str = "https://github.com/storytold/pdfcraft/releases/latest";
-
-/// (major, minor, patch) of `0.9.0`, `v0.9.0` or `0.9.0-p3`; `None` for other shapes.
-fn core(v: &str) -> Option<(u64, u64, u64)> {
-    let v = v.trim().trim_start_matches('v');
-    let v = v.split(['-', '+']).next()?;
-    let mut parts = v.split('.').map(|p| p.parse::<u64>().ok());
-    let c = (parts.next()??, parts.next()??, parts.next()??);
-    parts.next().is_none().then_some(c)
-}
-
-/// The gate on the fork's version line (CLAUDE.md): `fork` must be `<X.Y.Z>-p<N>` (N >= 1) built on
-/// top of upstream's releases, so X.Y.Z is at least `upstream`, storytold/pdfcraft's latest release.
-pub fn check_upstream(fork: &str, upstream: &str) -> Result<(), String> {
-    let (base, level) = fork.split_once("-p").ok_or_else(|| format!("{fork} is not a fork version <X.Y.Z>-p<N>"))?;
-    let fork_core = core(base).filter(|_| !base.contains('-')).ok_or_else(|| format!("{fork} is not a fork version <X.Y.Z>-p<N>"))?;
-    let n: u64 = level.parse().map_err(|_| format!("{fork}: -p{level} is not a patchlevel"))?;
-    if n == 0 {
-        return Err(format!("{fork}: patchlevels start at -p1"));
-    }
-    let up = core(upstream).ok_or_else(|| format!("upstream release {upstream} is not a version"))?;
-    if fork_core < up {
-        return Err(format!(
-            "{fork} is built on {base}, older than upstream's release {}: sync upstream (Sync upstream workflow) so the fork is {}-p1 or later",
-            upstream.trim_start_matches('v'),
-            upstream.trim_start_matches('v')
-        ));
-    }
-    println!("version: {fork} is on top of upstream's {upstream}");
-    Ok(())
-}
-
-/// storytold/pdfcraft's latest release tag, asked of GitHub with curl.
-fn latest_upstream_release() -> Result<String, String> {
-    let out = std::process::Command::new("curl")
-        .args(["-fsSI", "-o", "/dev/null", "-w", "%{redirect_url}", UPSTREAM_LATEST])
-        .output()
-        .map_err(|e| format!("running curl: {e}"))?;
-    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    url.rsplit_once("/tag/").map(|(_, t)| t.to_string()).filter(|t| core(t).is_some()).ok_or_else(|| format!("no upstream release found ({url})"))
-}
-
 pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
     let path = root.join("Cargo.toml");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
@@ -211,55 +94,37 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
             println!("{}", read(&text)?);
             Ok(())
         }
-        ["base"] => {
-            let current = read(&text)?;
-            println!("{}", base_version(&current));
+        ["set", new] => {
+            let old = read(&text)?;
+            let updated = replace(&text, new)?;
+            // Write atomically: a half-written root manifest breaks every build in the workspace.
+            let tmp = root.join("target").join("Cargo.toml.xtask-version");
+            std::fs::create_dir_all(root.join("target")).map_err(|e| format!("create target/: {e}"))?;
+            std::fs::write(&tmp, updated).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+            std::fs::rename(&tmp, &path).map_err(|e| format!("replace {}: {e}", path.display()))?;
+            // Refresh the workspace members' entries in Cargo.lock (no dependency upgrades).
+            let cargo_update = |extra: &[&str]| -> Result<(), String> {
+                let st = std::process::Command::new(env!("CARGO"))
+                    .current_dir(root)
+                    .args(["update", "--workspace"])
+                    .args(extra)
+                    .status()
+                    .map_err(|e| format!("cargo update: {e}"))?;
+                if st.success() { Ok(()) } else { Err(format!("cargo update --workspace {} failed", extra.join(" "))) }
+            };
+            if cargo_update(&["--offline"]).is_err() {
+                cargo_update(&[])?;
+            }
+            println!("version: {old} -> {new}");
             Ok(())
         }
-        ["fork"] => {
-            let current = read(&text)?;
-            let new = fork_version(&current, "p")?;
-            set_version(root, &path, &text, &new)
-        }
-        ["fork", tag_prefix] => {
-            let current = read(&text)?;
-            let new = fork_version(&current, tag_prefix)?;
-            set_version(root, &path, &text, &new)
-        }
-        ["bump-fork"] => {
-            let current = read(&text)?;
-            let new = bump_fork(&current, "p")?;
-            set_version(root, &path, &text, &new)
-        }
-        ["bump-fork", tag_prefix] => {
-            let current = read(&text)?;
-            let new = bump_fork(&current, tag_prefix)?;
-            set_version(root, &path, &text, &new)
-        }
-        ["set", new] => set_version(root, &path, &text, new),
-        ["check-upstream"] => check_upstream(&read(&text)?, &latest_upstream_release()?),
-        ["check-upstream", tag] => check_upstream(&read(&text)?, tag),
-        _ => Err("usage: cargo xtask version [base | set X.Y.Z[-pre] | fork [tag] | bump-fork [tag] | check-upstream [vX.Y.Z]]".into()),
+        _ => Err("usage: cargo xtask version [set X.Y.Z[-pre]]".into()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_fork_version_must_sit_on_top_of_upstreams_latest_release() {
-        check_upstream("0.9.0-p1", "v0.9.0").unwrap();
-        check_upstream("0.9.0-p7", "v0.9.0").unwrap();
-        check_upstream("0.9.1-p1", "v0.9.0").unwrap();
-        check_upstream("1.0.0-p2", "0.9.9").unwrap();
-        let behind = check_upstream("0.8.0-p9", "v0.9.0").unwrap_err();
-        assert!(behind.contains("older than upstream's release 0.9.0") && behind.contains("0.9.0-p1"), "{behind}");
-        for bad in ["0.9.0", "0.9.0-p0", "0.9.0-rc.1", "0.9.0-px", "0.9-p1", "0.9.0-rc-p1"] {
-            assert!(check_upstream(bad, "v0.9.0").is_err(), "{bad}");
-        }
-        assert!(check_upstream("0.9.0-p1", "nightly").is_err());
-    }
 
     const MANIFEST: &str = "[workspace]\nmembers = [\"a\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace.dependencies]\nfoo = { version = \"1\" }\n";
 
@@ -278,12 +143,15 @@ mod tests {
     }
 
     #[test]
-    fn replaces_workspace_and_internal_dependencies() {
-        let manifest = "[workspace.package]\nversion = \"0.1.0\"\n\n[workspace.dependencies]\nfoo = { version = \"1\" }\npdfcraft-geom = { path = \"crates/geom\", version = \"0.1.0\" }\n";
-        let out = replace(manifest, "0.2.0-p1").unwrap();
-        assert!(out.contains("version = \"0.2.0-p1\""));
-        assert!(out.contains("pdfcraft-geom = { path = \"crates/geom\", version = \"0.2.0-p1\" }"));
-        assert!(out.contains("foo = { version = \"1\" }"));
+    fn moves_the_workspace_crates_pins_with_it() {
+        let manifest = "[workspace.package]\nversion = \"0.1.0\"\n\n[workspace.dependencies]\n\
+                        own = { path = \"crates/own\", version = \"0.1.0\" }\n\
+                        dep = { version = \"0.1.0\" }\n\
+                        other = { path = \"crates/other\", version = \"0.2\" }\n";
+        let out = replace(manifest, "0.2.0").unwrap();
+        assert!(out.contains("own = { path = \"crates/own\", version = \"0.2.0\" }"), "{out}");
+        assert!(out.contains("dep = { version = \"0.1.0\" }"), "a registry dependency keeps its version");
+        assert!(out.contains("other = { path = \"crates/other\", version = \"0.2\" }"));
     }
 
     #[test]
@@ -295,31 +163,13 @@ mod tests {
 
     #[test]
     fn validates_versions() {
-        for ok in ["0.1.0", "1.20.300", "1.0.0-rc.1", "1.0.0-alpha", "1.0.0-x-y.2", "0.6.0-p1", "0.6.0-p2"] {
+        for ok in ["0.1.0", "1.20.300", "1.0.0-rc.1", "1.0.0-alpha", "1.0.0-x-y.2"] {
             assert!(validate(ok).is_ok(), "{ok}");
         }
         for bad in ["1.0", "1.0.0.0", "v1.0.0", "01.0.0", "1.0.0-", "1.0.0-a..b", "1.0.0+meta", "1.a.0", ""] {
             assert!(validate(bad).is_err(), "{bad}");
         }
         assert!(replace(MANIFEST, "nope").is_err());
-    }
-
-    #[test]
-    fn computes_base_and_fork_versions() {
-        assert_eq!(base_version("0.6.0"), "0.6.0");
-        assert_eq!(base_version("0.6.0-p1"), "0.6.0");
-        assert_eq!(base_version("1.2.3-rc.2"), "1.2.3");
-
-        assert_eq!(fork_version("0.6.0", "p").unwrap(), "0.6.0-p1");
-        assert_eq!(fork_version("0.6.0-p5", "p").unwrap(), "0.6.0-p1");
-    }
-
-    #[test]
-    fn bumps_fork_version() {
-        assert_eq!(bump_fork("0.6.0", "p").unwrap(), "0.6.0-p1");
-        assert_eq!(bump_fork("0.6.0-p1", "p").unwrap(), "0.6.0-p2");
-        assert_eq!(bump_fork("0.6.0-p9", "p").unwrap(), "0.6.0-p10");
-        assert_eq!(bump_fork("0.6.0-upstream.1", "p").unwrap(), "0.6.0-p1");
     }
 
     #[test]
