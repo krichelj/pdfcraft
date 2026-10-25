@@ -51,10 +51,18 @@ wait_for_checks() {
 
 # Usage: merge_pr <pr>. Merge it, deleting its branch, but only at CHECKED_HEAD (the commit whose
 # checks passed: a push after them is never merged untested). A PR another run merged first counts as
-# merged, so two runs that both saw it green never turn the second one red.
+# merged, so two runs that both saw it green never turn the second one red: when GitHub refuses the
+# merge because the other run's is still under way ("Merge already in progress", as on #47), this
+# one waits up to MERGE_SETTLE_SECONDS (default 120) for it to land.
 merge_pr() {
+  local waited=0
   gh pr merge "$1" --repo "$REPO" --merge --delete-branch ${CHECKED_HEAD:+--match-head-commit "$CHECKED_HEAD"} && return 0
-  [ "$(gh pr view "$1" --repo "$REPO" --json state --jq .state)" = MERGED ]
+  while :; do
+    [ "$(gh pr view "$1" --repo "$REPO" --json state --jq .state)" = MERGED ] && return 0
+    [ "$waited" -lt "${MERGE_SETTLE_SECONDS:-120}" ] || return 1
+    sleep 5
+    waited=$((waited + 5))
+  done
 }
 
 # Usage: merge_when_green <pr> <timeout seconds>. Wait for every check on the PR's head, then merge it

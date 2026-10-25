@@ -140,6 +140,13 @@ up() {
   shift
   git -C "$T/up-$n" "$@"
 }
+# A stand-in gh that lists no PRs: the scenarios never read the real repository, whose open PRs
+# change under them (the real Release workflow's release/v<next> PR, open for three minutes, once
+# sent the bump case down the existing-PR path). A case that needs a PR brings its own gh.
+mkdir -p "$T/ghnone"
+# shellcheck disable=SC2016 # the stand-in's own $*, written as it is
+printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/ghnone/calls"\n' "$T" >"$T/ghnone/gh"
+chmod +x "$T/ghnone/gh"
 # Usage: sync <name> [fork-side command] [VAR=value…]: dry-run the sync of that upstream in a fresh
 # clone at "$T/s-<name>", after running the command there (a fork commit the case needs) when one is
 # given, with the variables set (the stand-in LLM's mode, say). The LLM's calls go to "$T/s-<name>.llm".
@@ -152,7 +159,7 @@ sync() {
   : >"$d.llm"
   # In the background: the cases run side by side (`wait` below).
   (
-    cd "$d" && env SYNC_DRY_RUN=1 SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$n" STUB_LLM_LOG="$d.llm" "$@" \
+    cd "$d" && env PATH="$T/ghnone:$PATH" SYNC_DRY_RUN=1 SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$n" STUB_LLM_LOG="$d.llm" "$@" \
       bash packaging/fork/sync-upstream.sh >"$d.out" 2>&1 || rc=$?
     echo "$rc" >"$d.rc"
   ) &
@@ -460,7 +467,7 @@ check "  and the record says so" grep -q "upstream's changes to ci.yml were not 
 bump_case() {
   local d="$T/b-$1" rc=0
   git clone -q "$T/fork" "$d"
-  (cd "$d" && eval "$2" && BUMP_DRY_RUN=1 BUMP_SKIP_UPSTREAM_CHECK=1 bash packaging/fork/release-bump.sh) >"$d.out" 2>&1 || rc=$?
+  (cd "$d" && eval "$2" && PATH="$T/ghnone:$PATH" BUMP_DRY_RUN=1 BUMP_SKIP_UPSTREAM_CHECK=1 bash packaging/fork/release-bump.sh) >"$d.out" 2>&1 || rc=$?
   echo "$rc" >"$d.rc"
 }
 git -C "$T/fork" tag -f "v$version" >/dev/null
@@ -484,7 +491,15 @@ cat >"$T/gh/gh" <<'EOF'
 case "$1 $2" in
   "pr view")
     case " $* " in
-      *" state "*) echo "${GH_PR_STATE:-OPEN}" ;;
+      # GH_PR_STATE, or one state per call from the list GH_PR_STATES (the last one repeats).
+      *" state "*)
+        if [ -n "${GH_PR_STATES:-}" ]; then
+          n=$(($(cat "$GH_STEP.state" 2>/dev/null || echo 0) + 1)); echo "$n" >"$GH_STEP.state"
+          read -r -a states <<<"$GH_PR_STATES"
+          echo "${states[n - 1]:-${states[-1]}}"
+        else
+          echo "${GH_PR_STATE:-OPEN}"
+        fi ;;
       *) echo deadbeef ;;
     esac ;;
   "pr merge")
@@ -537,7 +552,8 @@ check "  but without that exemption it never counts as green" bash -c "$(declare
 
 check "merge: only the commit whose checks passed is merged" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; run_merge '$green' && grep -q 'match-head-commit deadbeef' '$T/ghlog'"
 check "merge: a PR another run merged first counts as merged" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; GH_MERGE_FAILS=1 GH_PR_STATE=MERGED run_merge '$green'"
-check "merge: a merge refused on an open PR (a newer push) fails" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; ! GH_MERGE_FAILS=1 GH_PR_STATE=OPEN run_merge '$green'"
+check "merge: a merge refused on an open PR (a newer push) fails" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; ! GH_MERGE_FAILS=1 GH_PR_STATE=OPEN MERGE_SETTLE_SECONDS=10 run_merge '$green'"
+check "merge: another run's merge still under way is waited for" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; rm -f '$T/step.state'; GH_MERGE_FAILS=1 GH_PR_STATES='OPEN OPEN MERGED' run_merge '$green'"
 
 # auto-merge.sh as the workflow runs it. A run for a finished check never waits and never fails for
 # one (it used to cancel the PR's own run, leaving every merged PR with a red check).
