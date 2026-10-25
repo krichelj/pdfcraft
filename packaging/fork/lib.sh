@@ -69,7 +69,8 @@ llm_available() {
   [ "${SYNC_NO_LLM:-}" != 1 ] && command -v "${ONCALL_LLM:-oncall-llm}" >/dev/null 2>&1
 }
 
-# The checks the LLM's fix loop must make pass: CI's test job (ci.yml), in its order, into FIX_ARGS.
+# The checks the LLM's fix loop must make pass: CI's test job (ci.yml), in its order, then Packaging
+# lint's checks of the macOS packaging (packaging-lint.yml), into FIX_ARGS.
 # SYNC_FIX_CHECKS (one NAME=COMMAND per line) replaces them (tests); SYNC_LLM_ROUNDS caps the rounds.
 # The mechanical fixes apply whatever the checks are: a formatter for fmt, and for assets the
 # catalog re-hash (an edited translation catalog changes its SHA-256, which no LLM can compute).
@@ -88,6 +89,8 @@ fix_check_args() {
       --check "layers=cargo xtask layers"
       --check "assets=cargo xtask assets"
       --check "cli-without-mcp=cargo check -p pdfcraft-cli --no-default-features"
+      # Packaging lint's (packaging-lint.yml): a merged script that doesn't parse fails CI too.
+      --check "packaging-lint=shellcheck -x packaging/env.sh packaging/icons.sh packaging/macos/*.sh packaging/macos/dmg/*.sh packaging/fork/*.sh && xmllint --noout packaging/macos/*.plist* && packaging/macos/test-install.sh"
     )
   fi
   FIX_ARGS+=(
@@ -234,6 +237,38 @@ merge_when_green_or_fix() {
 fill_summary() {
   awk -v f="$2" '/^- TODO: / { while ((getline l < f) > 0) print l; next } { print }' "$1" >"$1.new"
   mv "$1.new" "$1"
+}
+
+# Usage: locked <Cargo.lock>. Each registry package as `name@line version`, sorted, its line the semver
+# range a version stays compatible within (the major version; 0.minor; 0.0.patch).
+locked() {
+  awk '
+    function out(p) {
+      split(ver, p, /[.+-]/)
+      print name "@" (p[1] != "0" ? p[1] : p[2] != "0" ? "0." p[2] : "0.0." p[3]), ver
+    }
+    /^\[\[package\]\]/ { if (src ~ /^registry\+/) out(); name = ver = src = "" }
+    /^name = "/ { name = $3; gsub(/"/, "", name) }
+    /^version = "/ { ver = $3; gsub(/"/, "", ver) }
+    /^source = "/ { src = $3; gsub(/"/, "", src) }
+    END { if (src ~ /^registry\+/) out() }' "$1" | sort
+}
+
+# Usage: keep_newer_locked <the fork's Cargo.lock>. Raise each registry package the merged Cargo.lock
+# has older than the fork's lock does, on the same semver line, to the fork's version. Upstream's lock,
+# taken on a conflict, must not undo the fork's dependency updates: the 0.13.0 sync took tokio back
+# from 1.54.1 to 1.53.1, the version of an advisory (RUSTSEC-2026-0386) the fork had moved past.
+keep_newer_locked() {
+  local key fork merged
+  join <(locked "$1") <(locked Cargo.lock) | while read -r key fork merged; do
+    [ "$fork" != "$merged" ] || continue
+    [ "$(printf '%s\n%s\n' "$merged" "$fork" | sort -V | tail -1)" = "$fork" ] || continue
+    if cargo update --quiet -p "${key%@*}@$merged" --precise "$fork" 2>/dev/null; then
+      echo "sync: Cargo.lock keeps the fork's ${key%@*} $fork (upstream's lock had $merged)"
+    else
+      echo "sync: Cargo.lock has ${key%@*} $merged: the merged manifests don't take the fork's $fork"
+    fi
+  done
 }
 
 # Re-record the SHA-256 of every translation catalog in ATTRIBUTION.toml. Both sides add strings to

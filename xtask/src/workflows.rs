@@ -212,6 +212,19 @@ mod tests {
             assert!(test.contains(c), "ci.yml's test job runs `{c}`");
             assert!(lib.contains(c), "the LLM's fix loop runs `{c}` too");
         }
+        // And Packaging lint's: a merged script that doesn't parse failed the 0.13.0 sync's PR while
+        // the loop, running CI's test job only, reported every check passing.
+        let lint = file("packaging-lint.yml");
+        for c in [
+            "shellcheck -x packaging/env.sh packaging/icons.sh packaging/macos/*.sh packaging/macos/dmg/*.sh packaging/fork/*.sh",
+            "xmllint --noout packaging/macos/*.plist*",
+            "packaging/macos/test-install.sh",
+        ] {
+            assert!(lint.contains(c), "packaging-lint.yml runs `{c}`");
+            assert!(lib.contains(c), "the LLM's fix loop runs `{c}` too");
+        }
+        // Upstream's lock, taken on a conflict, never takes a package below the fork's version.
+        assert!(include_str!("../../packaging/fork/sync-upstream.sh").contains("keep_newer_locked \"$RUNNER_TMP/fork.lock\""));
     }
 
     #[test]

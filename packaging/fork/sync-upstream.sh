@@ -121,9 +121,12 @@ if [ -z "$pr" ]; then
     echo "sync: the merged assets don't check out yet; the on-call LLM's fix loop runs that check"
   fi
   # Cargo.lock as cargo writes it for the merged manifests: upstream's lock, taken on a conflict,
-  # lacks the fork's own dependencies, and the first build rewrites it. Committed here, so the fix
-  # loop starts from a clean tree (it refuses to commit over uncommitted tracked work).
+  # lacks the fork's own dependencies, and the first build rewrites it; and with every package the
+  # fork had newer kept at the fork's version. Committed here, so the fix loop starts from a clean
+  # tree (it refuses to commit over uncommitted tracked work).
   cargo metadata --format-version 1 >/dev/null 2>&1 || true
+  git show sync-base:Cargo.lock >"$RUNNER_TMP/fork.lock"
+  keep_newer_locked "$RUNNER_TMP/fork.lock"
   if ! git diff --quiet Cargo.lock; then
     git add Cargo.lock
     git commit --quiet -m "Fork: Cargo.lock as cargo writes it for the merged manifests

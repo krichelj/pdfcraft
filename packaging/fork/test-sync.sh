@@ -214,7 +214,7 @@ sync bump
 upstream cat
 printf '\tAn upstream string\tアップストリームの文字列\n' >>"$T/up-cat/crates/ui-egui/src/i18n/ja.tsv"
 h=$(sha256sum "$T/up-cat/crates/ui-egui/src/i18n/ja.tsv" | cut -d' ' -f1)
-awk -v h="$h" '$0 == "path = \"crates/ui-egui/src/i18n/ja.tsv\"" { w = 1 } w && /^sha256 = "/ { $0 = "sha256 = \"" h "\""; w = 0 } { print }' \
+awk -v h="$h" '/^\[\[asset\]\]/ { w = 0 } $0 == "path = \"crates/ui-egui/src/i18n/ja.tsv\"" { w = 1 } w && /^sha256 = "/ { $0 = "sha256 = \"" h "\""; w = 0 } { print }' \
   "$T/up-cat/ATTRIBUTION.toml" >"$T/a" && mv "$T/a" "$T/up-cat/ATTRIBUTION.toml"
 up cat commit -qam "upstream: a new string"
 sync cat
@@ -283,8 +283,9 @@ up ownwf commit -qam "upstream: CI on GitHub's runners"
 sync ownwf
 
 # 6c. What the LLM's fixes may never do: touch what CI runs or the fork's automation, disable a test,
-#     mute a command. Each stops the sync before anything is pushed. A catalog it edits is re-hashed
-#     by the assets check's mechanical fix, so the sync goes on.
+#     mute a command. Each stops the sync before anything is pushed. A catalog it edits leaves the
+#     assets checking out (re-hashed by the assets check's mechanical fix while catalogs had hashes),
+#     so the sync goes on.
 for m in protected ignore mute catalog; do
   upstream "g$m"
   echo "upstream note" >>"$T/up-g$m/NOTICE"
@@ -350,6 +351,23 @@ check "  and the fix loop ran" grep -q "^oncall-llm fix " "$T/s-assetllm.llm"
 check "a lockfile cargo rewrites after the merge: merged" ok lock
 check "  the rewrite committed before the fix loop" bash -c "git -C '$T/s-lock' log --format=%s | grep -q '^Fork: Cargo.lock as cargo writes it'"
 check "  and nothing left uncommitted" bash -c "git -C '$T/s-lock' diff HEAD --quiet"
+# Upstream's lock, taken on the conflict, has the tokio of the base (an advisory's version, 1.53.1);
+# the fork had moved past it. The merged lock keeps the fork's.
+check "  with the fork's newer tokio, not upstream's older one" bash -c \
+  "[ \"\$(grep -A1 '^name = \"tokio\"$' '$T/s-lock/Cargo.lock' | sed -n 's/^version = //p')\" = \"\$(grep -A1 '^name = \"tokio\"$' '$T/fork/Cargo.lock' | sed -n 's/^version = //p')\" ]"
+
+# keep_newer_locked with a stand-in cargo: which packages it raises, and to what.
+kn="$T/keepnewer"
+mkdir -p "$kn/bin"
+printf '#!/usr/bin/env bash\necho "cargo $*" >>"%s/calls"\n' "$kn" >"$kn/bin/cargo"
+chmod +x "$kn/bin/cargo"
+pkg() { printf '[[package]]\nname = "%s"\nversion = "%s"\n%s\n' "$1" "$2" "${3:-source = \"registry+https://github.com/rust-lang/crates.io-index\"}"; }
+{ pkg tokio 1.54.1; pkg serde 1.0.200; pkg foo 0.3.5; pkg bar 0.4.0; pkg pdfcraft 9.0.0 ""; } >"$kn/fork.lock"
+{ pkg tokio 1.53.1; pkg serde 1.0.210; pkg foo 0.3.2; pkg bar 0.3.9; pkg pdfcraft 1.0.0 ""; } >"$kn/Cargo.lock"
+: >"$kn/calls"
+(cd "$kn" && . "$SRC/packaging/fork/lib.sh" && cargo() { "$kn/bin/cargo" "$@"; } && keep_newer_locked fork.lock >/dev/null)
+check "the merged lock is raised to the fork's newer versions on the same semver line" bash -c \
+  "[ \"\$(sort '$kn/calls')\" = \"\$(printf 'cargo update --quiet -p foo@0.3.2 --precise 0.3.5\ncargo update --quiet -p tokio@1.53.1 --precise 1.54.1')\" ]"
 
 # rehash_catalogs rewrites only a catalog's own [[asset]] block. Upstream 0.13.0 lists catalogs
 # without a sha256 line; the old rewrite then put the catalog's hash on the next asset's line.
@@ -369,10 +387,11 @@ check "  and which files the merge changed" grep -q -- "--since sync-base" "$T/s
 check "the LLM's fix adding #[ignore] stops the sync" stopped gignore "disables a test or hides a failure"
 check "  naming the line" said gignore "#\[ignore\]"
 check "the LLM's fix muting a command with || true stops the sync" stopped gmute "disables a test or hides a failure"
-check "the LLM's catalog edit is re-hashed by the assets fix, and the sync goes on" ok gcatalog
+# Before upstream 0.13.0 a catalog's hash went stale and the assets check's mechanical fix re-hashed it;
+# from 0.13.0 catalogs carry no hash. Either way the edit must leave every asset checking out.
+check "the LLM's catalog edit leaves the assets checking out, and the sync goes on" ok gcatalog
 check "  with the LLM's string" grep -q "A string the LLM added" "$T/s-gcatalog/crates/ui-egui/src/i18n/ja.tsv"
 check "  every hash right" assets_ok gcatalog
-check "  through the mechanical fix" bash -c "git -C '$T/s-gcatalog' log --format=%s | grep -q '^Sync fix: assets: mechanical fix$'"
 check "an upstream edit of the fork's own workflow: merged" ok ownwf
 check "  keeping the fork's version" bash -c "grep -q '^name: CI$' '$T/s-ownwf/.github/workflows/ci.yml' && ! grep -q ubuntu-latest '$T/s-ownwf/.github/workflows/ci.yml'"
 check "  and the record says so" grep -q "upstream's changes to ci.yml were not taken" "$T/s-ownwf/docs/fork/releases/v$next.md"
