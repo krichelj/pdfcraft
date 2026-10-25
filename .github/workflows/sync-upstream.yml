@@ -59,18 +59,11 @@ jobs:
             echo "NEXTEST_TEST_THREADS=${JOBS}"
           } >> "$GITHUB_ENV"
 
-      # The on-call LLM: the owner's oncall-llm on the runner host, its server and key configured
-      # there, never in this repo. `health` wakes the server when it is down. Unavailable is a
-      # warning: the sync then leaves conflicts and failing checks to a person, as before.
-      - name: Page the on-call LLM
-        run: |
-          llm=$(command -v oncall-llm || echo "$HOME/.local/bin/oncall-llm")
-          if [ -x "$llm" ] && timeout 2400 "$llm" health; then
-            echo "ONCALL_LLM=$llm" >> "$GITHUB_ENV"
-          else
-            echo "::warning::the on-call LLM is unavailable: conflicts and failing checks stop the sync for a person"
-            echo "SYNC_NO_LLM=1" >> "$GITHUB_ENV"
-          fi
+      # No LLM (the owner, 2026-10-25): a merge goes through when upstream's changes merge cleanly
+      # and every check passes; a conflict the sync has no rule for, or a failing check, stops it
+      # and opens an issue for the owner.
+      - name: Merge without the on-call LLM
+        run: echo "SYNC_NO_LLM=1" >> "$GITHUB_ENV"
 
       - name: Sync storytold/pdfcraft main
         run: packaging/fork/sync-upstream.sh

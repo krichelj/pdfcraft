@@ -8,6 +8,25 @@ die() {
   exit 1
 }
 
+# Usage: ask_person <key> <title> <body>. Tell the owner the automation stopped for a person: a GitHub
+# issue (GitHub notifies the owner), or a comment on the open issue whose title has <key> (one issue
+# per sync branch, however many runs stop on it). A dry run only says what it would ask.
+ask_person() {
+  local n
+  if [ "${SYNC_DRY_RUN:-}" = 1 ]; then
+    echo "sync: dry run; would ask a person: $2"
+    return 0
+  fi
+  n=$(gh issue list --repo "$REPO" --state open --search "\"$1\" in:title" --json number --jq '.[0].number // empty' 2>/dev/null) || n=""
+  if [ -n "$n" ]; then
+    gh issue comment "$n" --repo "$REPO" --body "$2"$'\n\n'"$3" >/dev/null
+    echo "sync: asked a person again on issue #$n: $2"
+  else
+    gh issue create --repo "$REPO" --title "$1: $2" --body "$3" >/dev/null
+    echo "sync: asked a person in a new issue: $2"
+  fi
+}
+
 # Push a branch with the owner's gh login: the workflow's own token can't push workflow files, and
 # its pushes start no other workflow.
 push_as_owner() {
@@ -239,6 +258,8 @@ merge_when_green_or_fix() {
       2) die "PR #$pr's checks didn't finish in time; left open" ;;
     esac
     if [ "$tries" -ge "${SYNC_CI_FIX_RETRIES:-2}" ] || ! llm_available; then
+      ask_person "$branch" "PR #$pr has failing checks" \
+        "The sync PR #$pr ($branch) has failing checks; it stays open until they pass. Fix them on its branch: the next sync run merges it once every check is green."
       die "PR #$pr has failing checks; left open for a person"
     fi
     tries=$((tries + 1))

@@ -191,7 +191,11 @@ mod tests {
         assert!(sync.contains("runs-on: [self-hosted, linux, primary]"), "the primary host first, the other when it is down");
         assert!(file("sync-upstream.yml").contains("workflow_dispatch:"), "it can be started on demand");
         assert!(sync.contains("Saturate host threads"), "its fix loop builds and tests the workspace");
-        assert!(sync.contains("\"$llm\" health") && sync.contains("echo \"SYNC_NO_LLM=1\" >> \"$GITHUB_ENV\""), "pages the LLM, else falls back");
+        // The owner turned the LLM off (2026-10-25): every run merges without it, and what it would
+        // have handled stops for a person, with an issue that tells them.
+        assert!(sync.contains("run: echo \"SYNC_NO_LLM=1\" >> \"$GITHUB_ENV\"") && !sync.contains("health"), "the sync never pages the LLM");
+        let lib_text = include_str!("../../packaging/fork/lib.sh");
+        assert!(lib_text.contains("gh issue create --repo \"$REPO\""), "a stop for a person opens an issue");
         let script = include_str!("../../packaging/fork/sync-upstream.sh");
         assert!(script.contains("\"${ONCALL_LLM:-oncall-llm}\" resolve --repo \"$ROOT\""), "conflicts go to the LLM");
         assert!(script.contains("llm_fix \"Sync fix\" || die"), "then CI's checks, fixed until they pass");
