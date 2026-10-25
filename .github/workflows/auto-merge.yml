@@ -15,8 +15,12 @@ on:
 permissions:
   contents: read
 
+# A PR's own run (pull_request) is replaced only by a newer event on that PR (a push: its run is on
+# the old commit, which the PR no longer shows). A run for a finished check (workflow_run) is never
+# cancelled: it decides at once, never waits, and cancelling the PR's own run instead left every
+# merged PR with a red, cancelled "merge when green" although its checks had all passed.
 concurrency:
-  group: auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+  group: auto-merge-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -47,4 +51,5 @@ jobs:
       - name: Merge once every check has passed
         env:
           PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+          AUTO_MERGE_EVENT: ${{ github.event_name }}
         run: packaging/fork/auto-merge.sh "$PR"

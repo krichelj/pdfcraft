@@ -119,7 +119,7 @@ mod tests {
         let script = include_str!("../../packaging/fork/sync-upstream.sh");
         let lib = include_str!("../../packaging/fork/lib.sh");
         assert!(script.contains("gh pr create") && script.contains("merge_when_green_or_fix \"$pr\""));
-        assert!(lib.contains("gh pr merge \"$pr\" --repo \"$REPO\" --merge --delete-branch"));
+        assert!(lib.contains("gh pr merge \"$1\" --repo \"$REPO\" --merge --delete-branch") && lib.contains("merge_pr \"$pr\""));
         assert!(lib.contains(".name == \"test (shared code)\" and .conclusion == \"success\""), "merges only after CI's tests passed");
         assert!(script.contains("cargo xtask fork-notes check"), "and with its release record");
         let guard = file("own-runners-guard.yml");
@@ -267,6 +267,11 @@ mod tests {
         );
         let script = include_str!("../../packaging/fork/auto-merge.sh");
         assert!(script.contains("merge_when_green") && script.contains("MERGE_IGNORE_CHECK:-merge when green"), "waits for every check but its own");
+        // A run for a finished check must never cancel the PR's own run: that left every merged PR
+        // with a red, cancelled "merge when green" although all its checks had passed.
+        assert!(wf.contains("group: auto-merge-${{ github.event_name }}-"), "the PR's run and the finished-check runs never share a group");
+        assert!(wf.contains("AUTO_MERGE_EVENT: ${{ github.event_name }}") && script.contains("AUTO_MERGE_EVENT"), "finished-check runs never wait");
+        assert!(include_str!("../../packaging/fork/lib.sh").contains("--match-head-commit"), "only the commit whose checks passed is merged");
         assert!(file("own-runners-guard.yml").contains("\"Auto-merge\""));
     }
 
