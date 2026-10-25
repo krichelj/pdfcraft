@@ -2,3 +2,6 @@
 self-hosted-runner:
   labels:
     - macos-release
+    # own-ci-runners' role label: the primary runner host takes the job at once, the other only
+    # after the takeover delay (the Sync upstream job, so a host that is down never stalls it).
+    - primary

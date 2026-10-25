@@ -15,11 +15,14 @@ THEIRS is upstream (storytold/pdfcraft).
   Never edit a version by hand.
 - Never delete, skip or weaken a test or an assertion, never add `#[ignore]`, never silence a lint
   (`#[allow(...)]`, `-A`), and never change what CI runs. Fix the code under test.
+- When fixing, never edit these: `.github/`, `packaging/fork/`, `xtask/src/workflows.rs`,
+  `deny.toml`, `.repo-structure.toml`, `CLAUDE.md`, `AGENTS.md`. The sync refuses a fix that
+  touches them, adds `#[ignore]` or `#[cfg(any())]`, or appends `|| true` to a command.
 - Never panic on input: no new `unwrap`, `expect`, `panic!` or indexing with input-derived
   positions in non-test code (CLAUDE.md, "Never panic"). No `unsafe`.
 - Respect the layering in xtask/src/layers.rs: a crate depends only on lower layers.
 - Translation catalogs (crates/ui-egui/src/i18n/*.tsv) keep both sides' lines; ATTRIBUTION.toml's
-  hashes are recomputed by the sync, not by hand.
+  hashes are recomputed by the sync (the `assets` check's mechanical fix), never by hand.
 - No machine names, host names or server paths in any file: workflows ask for generic labels.
 - Make the smallest change that resolves the conflict or fixes the failure. Do not reformat,
   rename or reorganise code you were not asked about.

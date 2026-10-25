@@ -48,25 +48,34 @@ export PATH="$T/bin:$PATH"
 
 # A stand-in for the on-call LLM, keeping oncall-llm's CLI contract (lib.sh), driven by STUB_LLM:
 #   ok (default)  resolve: each conflicted file becomes both sides' lines (git merge-file --union),
-#                 staged; fix: runs each --check in order, makes a failing `test -f FILE` check pass by
-#                 creating FILE and commits that with the --commit-prefix; any other failure exits 1
+#                 staged; fix: runs each --check in order; a failing check with an --autofix runs it
+#                 and commits "<prefix>: <name>: mechanical fix"; a failing `test -f FILE` check is
+#                 made to pass by creating FILE and committed with the --commit-prefix; any other
+#                 failure exits 1. `fix --help` lists --since and --protect, as the real tool's does
 #   down          every command exits 2, as when the server can't be reached
 #   fixfail       fix exits 1, as when the checks still fail after its rounds
+#   protected     fix first commits an edit to .github/workflows/ci.yml (a path it must not touch)
+#   ignore        fix first commits a new #[ignore] above a test
+#   mute          fix first commits `|| true` onto a command in a packaging script
+#   catalog       fix first commits a new line in the Japanese catalog, leaving its hash stale
 # Every call is logged to STUB_LLM_LOG. The real tool is never called: ONCALL_LLM is the stand-in.
 mkdir -p "$T/llm"
 cat >"$T/llm/oncall-llm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# lib.sh asks `fix --help` which flags this version takes; that is not a call worth logging.
+case " $* " in *" --help "*) echo "usage: oncall-llm fix --repo DIR --check NAME=CMD [--since REF] [--protect GLOB]"; exit 0 ;; esac
 echo "oncall-llm $*" >>"${STUB_LLM_LOG:-/dev/null}"
 mode="${STUB_LLM:-ok}"
 if [ "$mode" = down ]; then echo "oncall-llm: the server can't be reached" >&2; exit 2; fi
 cmd="$1"
 shift
-repo=. prefix="" checks=()
+repo=. prefix="" checks=() autofixes=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="$2"; shift 2 ;;
     --check) checks+=("$2"); shift 2 ;;
+    --autofix) autofixes+=("$2"); shift 2 ;;
     --context) cat "$2" >>"${STUB_LLM_LOG:-/dev/null}.context"; shift 2 ;;
     --commit-prefix) prefix="$2"; shift 2 ;;
     --*) shift 2 ;;
@@ -85,9 +94,22 @@ case "$cmd" in
     ;;
   fix)
     if [ "$mode" = fixfail ]; then echo "oncall-llm: still failing after 8 rounds" >&2; exit 1; fi
+    case "$mode" in
+      protected) mkdir -p .github/workflows && echo "# the LLM was here" >>.github/workflows/ci.yml ;;
+      ignore) printf '#[cfg(test)]\nmod stub_llm {\n    #[test]\n    #[ignore]\n    fn flaky() {}\n}\n' >>crates/geom/src/lib.rs ;;
+      mute) echo 'cargo nextest run --workspace || true' >>packaging/macos/test-install.sh ;;
+      catalog) printf '\tA string the LLM added\tLLMが追加した文字列\n' >>crates/ui-egui/src/i18n/ja.tsv ;;
+    esac
+    if [ -n "$(git status --porcelain)" ]; then git add -A && git commit -qm "$prefix: $mode (round 1)"; fi
     for c in "${checks[@]}"; do
       name="${c%%=*}" command="${c#*=}"
       bash -c "$command" >/dev/null 2>&1 && continue
+      for a in "${autofixes[@]}"; do
+        if [ "${a%%=*}" = "$name" ] && bash -c "${a#*=}" >/dev/null 2>&1 && bash -c "$command" >/dev/null 2>&1; then
+          git add -A && git commit -qm "$prefix: $name: mechanical fix"
+          continue 2
+        fi
+      done
       case "$command" in "test -f "*) touch "${command#test -f }" ;; *) exit 1 ;; esac
       bash -c "$command" >/dev/null 2>&1 || exit 1
       git add -A && git commit -qm "$prefix: $name (round 1)"
@@ -214,6 +236,19 @@ sed -i 's/^name: CI$/name: CI (upstream)/; s/runs-on: \[self-hosted, linux\]/run
 up ownwf commit -qam "upstream: CI on GitHub's runners"
 sync ownwf
 
+# 6c. What the LLM's fixes may never do: touch what CI runs or the fork's automation, disable a test,
+#     mute a command. Each stops the sync before anything is pushed. A catalog it edits is re-hashed
+#     by the assets check's mechanical fix, so the sync goes on.
+for m in protected ignore mute catalog; do
+  upstream "g$m"
+  echo "upstream note" >>"$T/up-g$m/NOTICE"
+  up "g$m" commit -qam "upstream: an ordinary change"
+done
+sync gprotected "" STUB_LLM=protected
+sync gignore "" STUB_LLM=ignore
+sync gmute "" STUB_LLM=mute
+sync gcatalog "" STUB_LLM=catalog SYNC_FIX_CHECKS="assets=cargo xtask assets"
+
 wait
 
 check "nothing new: does nothing" ok none
@@ -258,6 +293,17 @@ check "  the fixed tree is what is released" in_tree fixed SYNC_FIXED
 check "  and the record lists the fix" grep -q "  - Sync fix: marker (round 1)" "$T/s-fixed/docs/fork/releases/v$next.md"
 check "checks still failing after the LLM's rounds stop the sync" stopped fixfail "still fails its checks"
 check "  before anything is pushed" bash -c "! grep -q 'stopping before the push' '$T/s-fixfail.out'"
+check "the LLM's fix touching a protected path stops the sync" stopped gprotected "protected path(s): .github/workflows/ci.yml"
+check "  before anything is pushed" bash -c "! grep -q 'stopping before the push' '$T/s-gprotected.out'"
+check "  and the LLM was told what it may not touch" grep -q -- "--protect .github/\*\* --protect packaging/fork/\*\*" "$T/s-gprotected.llm"
+check "  and which files the merge changed" grep -q -- "--since sync-base" "$T/s-gprotected.llm"
+check "the LLM's fix adding #[ignore] stops the sync" stopped gignore "disables a test or hides a failure"
+check "  naming the line" said gignore "#\[ignore\]"
+check "the LLM's fix muting a command with || true stops the sync" stopped gmute "disables a test or hides a failure"
+check "the LLM's catalog edit is re-hashed by the assets fix, and the sync goes on" ok gcatalog
+check "  with the LLM's string" grep -q "A string the LLM added" "$T/s-gcatalog/crates/ui-egui/src/i18n/ja.tsv"
+check "  every hash right" assets_ok gcatalog
+check "  through the mechanical fix" bash -c "git -C '$T/s-gcatalog' log --format=%s | grep -q '^Sync fix: assets: mechanical fix$'"
 check "an upstream edit of the fork's own workflow: merged" ok ownwf
 check "  keeping the fork's version" bash -c "grep -q '^name: CI$' '$T/s-ownwf/.github/workflows/ci.yml' && ! grep -q ubuntu-latest '$T/s-ownwf/.github/workflows/ci.yml'"
 check "  and the record says so" grep -q "upstream's changes to ci.yml were not taken" "$T/s-ownwf/docs/fork/releases/v$next.md"
@@ -291,7 +337,18 @@ case "$1 $2" in
   "pr view") echo deadbeef ;;
   "pr merge") echo "merged $3" >>"$GH_LOG" ;;
   "run list") echo 4242 ;;
-  "run view") echo "test (shared code): thread 'tests::page' panicked at crates/x/src/lib.rs:3" ;;
+  "run view")
+    if [ -n "${GH_BIGLOG:-}" ]; then
+      # As `gh run view --log-failed` prints a failed Test step: job, step and time on every line,
+      # colour codes, thousands of PASS lines, then the failure.
+      pre=$'test (shared code)\tRun tests\t2026-10-25T00:36:03.9092598Z '
+      for i in $(seq 1 6000); do printf '%s\033[32m        PASS\033[0m [   0.010s] pdfcraft-cos tests::case_%d\n' "$pre" "$i"; done
+      printf "%s    Compiling pdfcraft-x v0.1.0\n" "$pre"
+      printf "%sthread 'tests::page' panicked at crates/x/src/lib.rs:3:5:\n%sassertion \`left == right\` failed\n" "$pre" "$pre"
+      printf '%s        \033[31mFAIL\033[0m [   0.020s] pdfcraft-x tests::page\n' "$pre"
+    else
+      echo "test (shared code): thread 'tests::page' panicked at crates/x/src/lib.rs:3"
+    fi ;;
   "api "*)
     n=$(($(cat "$GH_STEP") + 1)); echo "$n" >"$GH_STEP"
     f=$(sed -n "${n}p" "$GH_STATES"); [ -n "$f" ] || f=$(tail -1 "$GH_STATES")
@@ -351,6 +408,14 @@ check "  red after every fix: two attempts, then left open" bash -c "$(declare -
   ! run_fixing '$red' && [ \"\$(fixes)\" = 2 ] && ! grep -q merged '$T/ghlog'"
 check "  without the LLM: left open at once" bash -c "$(declare -f run_fixing fixes); T='$T' SRC='$SRC'
   ! SYNC_NO_LLM=1 run_fixing '$red' && [ \"\$(fixes)\" = 0 ] && ! grep -q merged '$T/ghlog'"
+check "  a CI fix touching a protected path is never pushed" bash -c "$(declare -f run_fixing fixes); T='$T' SRC='$SRC'
+  ! STUB_LLM=protected run_fixing '$red' && [ \"\$(fixes)\" = 1 ] && ! grep -q '^pushed' '$T/ghlog' && ! grep -q merged '$T/ghlog'"
+check "  the LLM reads a digest of a 900 KB-class failed log, not the log" bash -c "$(declare -f run_fixing fixes); T='$T' SRC='$SRC'
+  GH_BIGLOG=1 run_fixing '$red' '$pending' '$green' \
+    && grep -q \"panicked at crates/x/src/lib.rs:3:5\" '$T/llmlog.context' \
+    && grep -q 'FAIL \[   0.020s\] pdfcraft-x tests::page' '$T/llmlog.context' \
+    && ! grep -q 'PASS \[' '$T/llmlog.context' && ! grep -q \$'\\t' '$T/llmlog.context' \
+    && ! grep -q \$'\\033' '$T/llmlog.context' && [ \"\$(wc -c <'$T/llmlog.context')\" -le 40000 ]"
 
 echo "fork automation: $pass passed, $fail failed"
 [ "$fail" = 0 ]
