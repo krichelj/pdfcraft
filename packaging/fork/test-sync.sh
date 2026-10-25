@@ -58,6 +58,7 @@ export PATH="$T/bin:$PATH"
 #   ignore        fix first commits a new #[ignore] above a test
 #   mute          fix first commits `|| true` onto a command in a packaging script
 #   catalog       fix first commits a new line in the Japanese catalog, leaving its hash stale
+#   comment       fix first commits packaging/macos/package.sh's CLI_ZIP line commented out
 # Every call is logged to STUB_LLM_LOG. The real tool is never called: ONCALL_LLM is the stand-in.
 mkdir -p "$T/llm"
 cat >"$T/llm/oncall-llm" <<'EOF'
@@ -104,6 +105,8 @@ case "$cmd" in
       ignore) printf '#[cfg(test)]\nmod stub_llm {\n    #[test]\n    #[ignore]\n    fn flaky() {}\n}\n' >>crates/geom/src/lib.rs ;;
       mute) echo 'cargo nextest run --workspace || true' >>packaging/macos/test-install.sh ;;
       catalog) printf '\tA string the LLM added\tLLMが追加した文字列\n' >>crates/ui-egui/src/i18n/ja.tsv ;;
+      # As the real fix loop did to quiet shellcheck's "appears unused" in the 0.13.0 sync.
+      comment) sed -i 's/^CLI_ZIP=/###CLI_ZIP=/' packaging/macos/package.sh ;;
     esac
     if [ -n "$(git status --porcelain)" ]; then git add -A && git commit -qm "$prefix: $mode (round 1)"; fi
     for c in "${checks[@]}"; do
@@ -194,6 +197,24 @@ tip=$(up many rev-parse HEAD)
 } | up many fast-import --quiet
 up many reset -q --hard main
 sync many
+
+# 2c. A sync PR is already open (a stand-in gh lists it as #77). One behind main (opened before a
+#     fix to this automation landed, as #42 was) is rebuilt from today's main; one on today's main is
+#     worked on in place, which a dry run never does: it pushes nothing and merges nothing.
+mkdir -p "$T/ghpr"
+# shellcheck disable=SC2016 # the stand-in's own $1 $2 $*, written as they are
+printf '#!/usr/bin/env bash\ncase "$1 $2" in\n  "pr list") echo 77 ;;\n  *) echo "gh $*" >>"%s/ghpr/calls" ;;\nesac\n' "$T" >"$T/ghpr/gh"
+chmod +x "$T/ghpr/gh"
+for n in stalepr currentpr; do
+  upstream "$n"
+  echo "upstream note" >>"$T/up-$n/NOTICE"
+  up "$n" commit -qam "upstream: an ordinary change"
+done
+# The open PR's branch: before main's last commit (stale), or on it (current).
+git -C "$T/fork" branch -f "sync/upstream-$(git -C "$T/up-stalepr" rev-parse --short=12 HEAD)" HEAD~1
+git -C "$T/fork" branch -f "sync/upstream-$(git -C "$T/up-currentpr" rev-parse --short=12 HEAD)" HEAD
+sync stalepr "" PATH="$T/ghpr:$PATH"
+sync currentpr "" PATH="$T/ghpr:$PATH"
 
 # 3. Upstream adds a workflow for another platform or GitHub's runners.
 upstream wf
@@ -286,7 +307,7 @@ sync ownwf
 #     mute a command. Each stops the sync before anything is pushed. A catalog it edits leaves the
 #     assets checking out (re-hashed by the assets check's mechanical fix while catalogs had hashes),
 #     so the sync goes on.
-for m in protected ignore mute catalog; do
+for m in protected ignore mute catalog comment; do
   upstream "g$m"
   echo "upstream note" >>"$T/up-g$m/NOTICE"
   up "g$m" commit -qam "upstream: an ordinary change"
@@ -294,6 +315,7 @@ done
 sync gprotected "" STUB_LLM=protected
 sync gignore "" STUB_LLM=ignore
 sync gmute "" STUB_LLM=mute
+sync gcomment "" STUB_LLM=comment
 sync gcatalog "" STUB_LLM=catalog SYNC_FIX_CHECKS="assets=cargo xtask assets"
 
 wait
@@ -306,6 +328,10 @@ check "  the fork's next patch version, $next" version_is plain "$next"
 check "  and its record, which passes, naming the commit" notes_ok plain "$next"
 check "  the record lists the upstream commit" grep -q "upstream: an ordinary change" "$T/s-plain/docs/fork/releases/v$next.md"
 check "  assets still check out" assets_ok plain
+check "an open sync PR behind main is rebuilt from today's main" said stalepr "PR #77 is behind main; rebuilding it"
+check "  through the merge to its dry-run stop" said stalepr "dry run; stopping before the push"
+check "an open sync PR on today's main: a dry run stops there" said currentpr "dry run; PR #77 is open on the current main"
+check "  without asking the LLM or touching the PR" bash -c "[ ! -s '$T/s-currentpr.llm' ] && [ ! -s '$T/ghpr/calls' ]"
 check "a long upstream history is merged" ok many
 check "  its record lists the newest 40 commits and counts the rest" bash -c \
   "grep -q 'upstream: change 1461,' '$T/s-many/docs/fork/releases/v$next.md' && grep -q 'and 1460 more' '$T/s-many/docs/fork/releases/v$next.md' && ! grep -q 'upstream: change 1460,' '$T/s-many/docs/fork/releases/v$next.md'"
@@ -387,6 +413,8 @@ check "  and which files the merge changed" grep -q -- "--since sync-base" "$T/s
 check "the LLM's fix adding #[ignore] stops the sync" stopped gignore "disables a test or hides a failure"
 check "  naming the line" said gignore "#\[ignore\]"
 check "the LLM's fix muting a command with || true stops the sync" stopped gmute "disables a test or hides a failure"
+check "the LLM's fix commenting a line out stops the sync" stopped gcomment "disables a test or hides a failure"
+check "  naming the line" said gcomment "###CLI_ZIP="
 # Before upstream 0.13.0 a catalog's hash went stale and the assets check's mechanical fix re-hashed it;
 # from 0.13.0 catalogs carry no hash. Either way the edit must leave every asset checking out.
 check "the LLM's catalog edit leaves the assets checking out, and the sync goes on" ok gcatalog
