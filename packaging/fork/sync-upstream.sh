@@ -4,15 +4,22 @@
 #   1. Fetch upstream main; stop when the fork already has every commit.
 #   2. On branch sync/upstream-<upstream sha>: merge it, keep the fork's rules (CLAUDE.md): only the
 #      fork's workflows stay, and Cargo.toml / Cargo.lock conflicts take upstream's and re-apply the
-#      fork version. Any other conflict stops the sync with the files listed.
-#   3. Bump the version: <base>-p<N+1>, or <new upstream base>-p1 when upstream's version moved,
-#      and write the release record (cargo xtask fork-notes) listing the upstream commits it brings.
-#   4. Push and open the PR, wait for its checks, merge it (the branch is deleted on merge).
-#      The push to main starts the Release workflow, which builds and publishes the DMG.
+#      fork version. The on-call LLM (lib.sh) resolves every other conflict; without it, or when it
+#      can't, the sync stops with the files listed.
+#   3. The on-call LLM runs CI's checks on the merged tree and fixes what fails, one commit per
+#      round ("Sync fix: ..."); the sync stops if they still fail.
+#   4. Bump the version: <base>-p<N+1>, or <new upstream base>-p1 when upstream's version moved,
+#      and write the release record (cargo xtask fork-notes) listing the upstream commits it brings
+#      and what the LLM resolved and fixed.
+#   5. Push and open the PR, wait for its checks, merge it (the branch is deleted on merge); a
+#      failing check goes back to the LLM with its log, at most twice. The push to main starts the
+#      Release workflow, which builds and publishes the DMG.
 #
 # Runs in the Sync upstream workflow with the owner's gh login on the runner host: commits made
 # with the workflow's own token can't touch workflow files, and don't start other workflows.
 # Env: SYNC_DRY_RUN=1 stops before pushing; SYNC_CHECKS_TIMEOUT (seconds, default 7200);
+#      SYNC_NO_LLM=1 leaves conflicts and failing checks to a person; ONCALL_LLM, SYNC_LLM_ROUNDS,
+#      SYNC_CI_FIX_RETRIES and SYNC_FIX_CHECKS as lib.sh says;
 #      SYNC_FORK_REF syncs from that commit instead of origin/main, and SYNC_UPSTREAM_URL from another
 #      repository's main instead of storytold/pdfcraft's (tests).
 set -euo pipefail
@@ -45,6 +52,7 @@ if [ -z "$pr" ]; then
   current=$(cargo xtask version 2>/dev/null | tail -1)
   git checkout --quiet -B "$branch"
   took_deny=""
+  llm_resolved=""
   RUNNER_TMP="$(mktemp -d)"
   if ! git merge --no-edit --no-ff -m "Merge storytold/pdfcraft main (${up:0:12})" "$UPSTREAM_REF" >/dev/null 2>&1; then
     for f in $(git diff --name-only --diff-filter=U); do
@@ -89,6 +97,17 @@ if [ -z "$pr" ]; then
       git add deny.toml
     fi
     left=$(git diff --name-only --diff-filter=U)
+    # Everything the rules above don't cover goes to the on-call LLM, which stages what it resolves.
+    if [ -n "$left" ] && llm_available; then
+      echo "sync: the on-call LLM resolves $(echo "$left" | wc -l) conflicted file(s): $(echo "$left" | tr '\n' ' ')"
+      if "${ONCALL_LLM:-oncall-llm}" resolve --repo "$ROOT" --instructions "$ROOT/packaging/fork/oncall-instructions.md" \
+        --report "$RUNNER_TMP/resolve.json"; then
+        llm_resolved="$left"
+      else
+        echo "sync: the on-call LLM left conflicts unresolved (exit $?)"
+      fi
+      left=$(git diff --name-only --diff-filter=U)
+    fi
     [ -z "$left" ] || die "upstream merge conflicts that need a person: $(echo "$left" | tr '\n' ' ')"
     git -c core.editor=true commit --quiet --no-edit
   fi
@@ -120,6 +139,20 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   for w in .github/workflows/*.yml; do
     case " $FORK_WORKFLOWS " in *" ${w##*/} "*) ;; *) git rm --quiet -- "$w" && echo "sync: removed upstream workflow $w" ;; esac
   done
+  if ! git diff --cached --quiet; then
+    git commit --quiet -m "Fork: only the fork's workflows stay
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+  fi
+
+  # The merged tree must pass CI's checks: the on-call LLM fixes what fails, one commit per round.
+  if llm_available; then
+    echo "sync: the on-call LLM runs CI's checks on the merged tree"
+    llm_fix "Sync fix" || die "the merged tree still fails its checks after the on-call LLM's rounds; a person decides"
+  else
+    echo "sync: no on-call LLM; the PR's CI checks the merged tree"
+  fi
+  fixes=$(git log --first-parent --format=%s sync-base..HEAD | grep '^Sync fix' || true)
 
   base_now="${current%%-*}"
   base_up=$(git show "$UPSTREAM_REF:Cargo.toml" | sed -n 's/^version = "\([^"]*\)".*/\1/p' | head -1)
@@ -143,6 +176,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     git log --no-merges --format='%s' "$UPSTREAM_REF" --not sync-base | head -40 | sed -e 's/^/  - /' -e 's/TODO/to-do/g'
     if [ "$count" -gt 40 ]; then echo "  - and $((count - 40)) more"; fi
     if [ -n "$kept" ]; then echo "- Keeps the fork's own workflows; upstream's changes to$kept were not taken."; fi
+    if [ -n "$llm_resolved" ]; then
+      files=""
+      for f in $llm_resolved; do files="${files:+$files, }\`$f\`"; done
+      echo "- The on-call LLM resolved the merge conflicts in: $files."
+    fi
+    if [ -n "$fixes" ]; then
+      echo "- The on-call LLM fixed what the merge broke, so CI's checks pass:"
+      echo "$fixes" | sed -e 's/^/  - /' -e 's/TODO/to-do/g'
+    fi
   } >"$summary"
   fill_summary "$record" "$summary"
   rm -f "$summary"
@@ -164,7 +206,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     --body-file "$record" | sed -n 's#.*/pull/\([0-9]*\)$#\1#p')
   [ -n "$pr" ] || die "couldn't open the PR"
   echo "sync: opened PR #$pr"
+else
+  # An earlier run opened the PR: work on its head, where a fix for a failing check goes.
+  git fetch --quiet origin "$branch"
+  git checkout --quiet -B "$branch" FETCH_HEAD
 fi
 
-merge_when_green "$pr" "${SYNC_CHECKS_TIMEOUT:-7200}"
+merge_when_green_or_fix "$pr" "${SYNC_CHECKS_TIMEOUT:-7200}" "$branch"
 echo "sync: merged PR #$pr; the push to main starts the Release workflow"

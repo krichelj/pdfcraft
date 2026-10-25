@@ -118,7 +118,7 @@ mod tests {
         assert!(sync.contains("persist-credentials: false"), "never pushes with the workflow's token");
         let script = include_str!("../../packaging/fork/sync-upstream.sh");
         let lib = include_str!("../../packaging/fork/lib.sh");
-        assert!(script.contains("gh pr create") && script.contains("merge_when_green \"$pr\""));
+        assert!(script.contains("gh pr create") && script.contains("merge_when_green_or_fix \"$pr\""));
         assert!(lib.contains("gh pr merge \"$pr\" --repo \"$REPO\" --merge --delete-branch"));
         assert!(lib.contains(".name == \"test (shared code)\" and .conclusion == \"success\""), "merges only after CI's tests passed");
         assert!(script.contains("cargo xtask fork-notes check"), "and with its release record");
@@ -129,6 +129,51 @@ mod tests {
             scenarios.contains("packaging/fork/test-sync.sh") && scenarios.contains("\"packaging/fork/**\""),
             "its scenarios run on PRs that change it"
         );
+    }
+
+    #[test]
+    fn every_job_asks_for_the_own_runners_by_role_never_by_machine() {
+        // own-ci-runners: `primary` is the one role label (the primary host first, the other after
+        // the takeover delay); a host's name never appears in a public workflow (machine-privacy).
+        for (file, text) in ALL {
+            for line in text.lines().map(str::trim).filter(|l| l.starts_with("runs-on:")) {
+                let labels = line.trim_start_matches("runs-on:").trim();
+                assert!(
+                    labels == "[self-hosted, linux]" || labels == "[self-hosted, linux, primary]",
+                    "{file}: `{line}` asks for something other than the own runners' generic labels"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_sync_runs_on_the_primary_host_and_hands_what_a_merge_breaks_to_the_llm() {
+        let sync = jobs(file("sync-upstream.yml")).into_iter().find(|(n, _)| n == "sync").expect("a sync job").1;
+        assert!(sync.contains("runs-on: [self-hosted, linux, primary]"), "the primary host first, the other when it is down");
+        assert!(file("sync-upstream.yml").contains("workflow_dispatch:"), "it can be started on demand");
+        assert!(sync.contains("Saturate host threads"), "its fix loop builds and tests the workspace");
+        assert!(sync.contains("\"$llm\" health") && sync.contains("echo \"SYNC_NO_LLM=1\" >> \"$GITHUB_ENV\""), "pages the LLM, else falls back");
+        let script = include_str!("../../packaging/fork/sync-upstream.sh");
+        assert!(script.contains("\"${ONCALL_LLM:-oncall-llm}\" resolve --repo \"$ROOT\""), "conflicts go to the LLM");
+        assert!(script.contains("llm_fix \"Sync fix\" || die"), "then CI's checks, fixed until they pass");
+        assert!(script.contains("merge_when_green_or_fix \"$pr\""), "and a failing PR check goes back to it");
+        let lib = include_str!("../../packaging/fork/lib.sh");
+        assert!(lib.contains("--log-failed") && lib.contains("SYNC_CI_FIX_RETRIES:-2"), "with the failed log, a bounded number of times");
+        // The fix loop's checks are CI's test job's: a check CI runs that the loop skips would merge a
+        // tree the LLM never made pass.
+        let test = jobs(CI).into_iter().find(|(n, _)| n == "test").expect("ci.yml test job").1;
+        for c in [
+            "cargo fmt --all -- --check",
+            "cargo clippy --workspace --all-targets -- -D warnings",
+            "cargo nextest run --workspace --no-fail-fast",
+            "cargo test --workspace --doc",
+            "cargo xtask layers",
+            "cargo xtask assets",
+            "cargo check -p pdfcraft-cli --no-default-features",
+        ] {
+            assert!(test.contains(c), "ci.yml's test job runs `{c}`");
+            assert!(lib.contains(c), "the LLM's fix loop runs `{c}` too");
+        }
     }
 
     #[test]
