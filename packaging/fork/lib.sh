@@ -18,12 +18,18 @@ ask_person() {
     return 0
   fi
   n=$(gh issue list --repo "$REPO" --state open --search "\"$1\" in:title" --json number --jq '.[0].number // empty' 2>/dev/null) || n=""
+  # Telling the owner must never hide why the sync stopped: a failure here is a warning, and the
+  # caller's own error follows (issues were disabled on the fork when this first ran).
   if [ -n "$n" ]; then
-    gh issue comment "$n" --repo "$REPO" --body "$2"$'\n\n'"$3" >/dev/null
-    echo "sync: asked a person again on issue #$n: $2"
-  else
-    gh issue create --repo "$REPO" --title "$1: $2" --body "$3" >/dev/null
+    if gh issue comment "$n" --repo "$REPO" --body "$2"$'\n\n'"$3" >/dev/null; then
+      echo "sync: asked a person again on issue #$n: $2"
+    else
+      echo "::warning::couldn't comment on issue #$n to ask a person: $2"
+    fi
+  elif gh issue create --repo "$REPO" --title "$1: $2" --body "$3" >/dev/null; then
     echo "sync: asked a person in a new issue: $2"
+  else
+    echo "::warning::couldn't open an issue to ask a person: $2"
   fi
 }
 
