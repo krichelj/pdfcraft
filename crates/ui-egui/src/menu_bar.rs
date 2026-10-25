@@ -171,6 +171,11 @@ pub trait MenuBar {
 
 /// `s` in muda's accelerator syntax, as macOS writes it (⌘ is `Super`, ⌃ is `Control`). `None`
 /// for a key the menu bar can't bind, which is then shown without a shortcut.
+/// F1 to F24: keys that type nothing, so a menu may bind them without a modifier.
+fn function_key(k: &str) -> bool {
+    k.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=24).contains(&n))
+}
+
 pub fn accelerator(s: Shortcut) -> Option<String> {
     let code = match s.key {
         "," => "Comma".to_owned(),
@@ -181,6 +186,7 @@ pub fn accelerator(s: Shortcut) -> Option<String> {
         "←" => "ArrowLeft".to_owned(),
         "→" => "ArrowRight".to_owned(),
         "Tab" => "Tab".to_owned(),
+        k if function_key(k) => k.to_owned(),
         k => {
             let mut chars = k.chars();
             match (chars.next(), chars.next()) {
@@ -200,8 +206,8 @@ pub fn accelerator(s: Shortcut) -> Option<String> {
     if s.command {
         parts.push("Super".to_owned());
     }
-    if parts.is_empty() {
-        // A bare key in the menu bar would swallow ordinary typing.
+    if parts.is_empty() && !function_key(s.key) {
+        // A bare key in the menu bar would swallow ordinary typing (a function key types nothing).
         return None;
     }
     parts.push(code);
@@ -484,6 +490,9 @@ mod tests {
         assert_eq!(accelerator(Shortcut { command: false, shift: false, mac_ctrl: false, key: "K" }), None, "a bare key is never bound");
         assert_eq!(accelerator(Shortcut::cmd("Delete")), None);
         assert_eq!(accelerator(Shortcut::cmd("")), None);
+        // A function key types nothing: bound bare (upstream's F4 shows or hides the side panel).
+        assert_eq!(accelerator(Shortcut { command: false, shift: false, mac_ctrl: false, key: "F4" }).as_deref(), Some("F4"));
+        assert_eq!(accelerator(Shortcut { command: false, shift: false, mac_ctrl: false, key: "F25" }), None);
         for spec in commands::COMMANDS.iter().filter(|s| s.menu.is_some()) {
             if let Some(s) = spec.shortcut {
                 assert!(accelerator(s).is_some(), "{} has a key the menu bar can bind", spec.id);
