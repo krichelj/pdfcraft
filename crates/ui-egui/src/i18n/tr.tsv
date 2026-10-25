@@ -744,6 +744,14 @@
 	Couldn't start the update: {e}	Güncelleme başlatılamadı: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	{c} sürümüne sahipsiniz. "Yükle ve yeniden başlat" yeni sürümü indirir, denetler ve PdfCraft'ı yeniden açar.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	En son sürümü GitHub'a sorar. "Yükle ve yeniden başlat"ı seçene kadar hiçbir şey indirilmez veya yüklenmez.
+	The original PdfCraft {v} is available.	Orijinal PdfCraft {v} kullanılabilir.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	{c} sürümüne sahipsiniz. "Birleştir ve güncelle" onu derleme makinelerinizde fork'unuza birleştirir ve testleri çalıştırır; ardından fork'un yeni sürümü gelir.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	En son sürümleri GitHub'a sorar. "Birleştir ve güncelle"yi seçene kadar hiçbir şey birleştirilmez veya yüklenmez.
+	Merge and update	Birleştir ve güncelle
+	Starting the merge…	Birleştirme başlatılıyor…
+	Couldn't start the merge: {e}	Birleştirme başlatılamadı: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} fork'unuza birleştiriliyor. Fork'un sürümü çıktığında PdfCraft güncellemeyi sunar; çalışmaya devam edebilirsiniz.
+	Open the workflow page	İş akışı sayfasını aç
 	none	yok
 	Declared conformance: {shown}	Bildirilen uyumluluk: {shown}
 	Output intent: {list}	Çıktı amacı: {list}

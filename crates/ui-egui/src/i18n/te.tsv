@@ -763,6 +763,14 @@ comment menu	Edit	సవరించు
 	Couldn't start the update: {e}	అప్‌డేట్‌ను ప్రారంభించడం సాధ్యం కాలేదు: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	మీ వద్ద వెర్షన్ {c} ఉంది. "ఇన్‌స్టాల్ చేసి మళ్లీ ప్రారంభించండి" కొత్త వెర్షన్‌ను డౌన్‌లోడ్ చేసి, తనిఖీ చేసి, PdfCraftను మళ్లీ తెరుస్తుంది.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	తాజా విడుదల కోసం GitHubని అడుగుతుంది. మీరు "ఇన్‌స్టాల్ చేసి మళ్లీ ప్రారంభించండి" ఎంచుకునే వరకు ఏదీ డౌన్‌లోడ్ లేదా ఇన్‌స్టాల్ కాదు.
+	The original PdfCraft {v} is available.	అసలు PdfCraft {v} అందుబాటులో ఉంది.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	మీ వద్ద వెర్షన్ {c} ఉంది. "విలీనం చేసి అప్‌డేట్ చేయండి" దాన్ని మీ బిల్డ్ మెషీన్‌లలో మీ ఫోర్క్‌లో విలీనం చేసి, పరీక్షలను నడుపుతుంది; ఆ తర్వాత ఫోర్క్ కొత్త విడుదల వస్తుంది.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	తాజా విడుదలల కోసం GitHubని అడుగుతుంది. మీరు "విలీనం చేసి అప్‌డేట్ చేయండి" ఎంచుకునే వరకు ఏదీ విలీనం లేదా ఇన్‌స్టాల్ కాదు.
+	Merge and update	విలీనం చేసి అప్‌డేట్ చేయండి
+	Starting the merge…	విలీనాన్ని ప్రారంభిస్తోంది…
+	Couldn't start the merge: {e}	విలీనాన్ని ప్రారంభించడం సాధ్యం కాలేదు: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v}ని మీ ఫోర్క్‌లో విలీనం చేస్తోంది. ఫోర్క్ విడుదల వచ్చినప్పుడు, PdfCraft అప్‌డేట్‌ను అందిస్తుంది; మీరు పని కొనసాగించవచ్చు.
+	Open the workflow page	వర్క్‌ఫ్లో పేజీని తెరవండి
 	none	ఏదీ లేదు
 	Declared conformance: {shown}	ప్రకటించిన అనుగుణ్యత: {shown}
 	Output intent: {list}	అవుట్‌పుట్ ఇంటెంట్: {list}

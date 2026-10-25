@@ -863,6 +863,14 @@ key	Space	Mezerník
 	Couldn't start the update: {e}	Aktualizaci nelze spustit: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Máte verzi {c}. Možnost Nainstalovat a znovu spustit stáhne novou verzi, ověří ji a znovu otevře PdfCraft.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Zjistí na GitHubu nejnovější vydání. Nic se nestáhne ani nenainstaluje, dokud nezvolíte Nainstalovat a znovu spustit.
+	The original PdfCraft {v} is available.	Je k dispozici původní PdfCraft {v}.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Máte verzi {c}. Možnost Sloučit a aktualizovat ji na vašich sestavovacích počítačích sloučí do vašeho forku a spustí testy; nové vydání forku následuje.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Zjistí na GitHubu nejnovější vydání. Nic se nesloučí ani nenainstaluje, dokud nezvolíte Sloučit a aktualizovat.
+	Merge and update	Sloučit a aktualizovat
+	Starting the merge…	Spouští se sloučení…
+	Couldn't start the merge: {e}	Sloučení nelze spustit: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} se slučuje do vašeho forku. Až vyjde vydání forku, PdfCraft nabídne aktualizaci; můžete pokračovat v práci.
+	Open the workflow page	Otevřít stránku workflow
 	none	žádná
 	Declared conformance: {shown}	Deklarovaná shoda: {shown}
 	Output intent: {list}	Výstupní záměr: {list}

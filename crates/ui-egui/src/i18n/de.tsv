@@ -766,6 +766,14 @@
 	Couldn't start the update: {e}	Das Update konnte nicht gestartet werden: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Sie haben Version {c}. „Installieren und neu starten“ lädt die neue Version herunter, prüft sie und öffnet PdfCraft erneut.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Fragt GitHub nach der neuesten Version. Nichts wird heruntergeladen oder installiert, bevor Sie „Installieren und neu starten“ wählen.
+	The original PdfCraft {v} is available.	Das ursprüngliche PdfCraft {v} ist verfügbar.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Sie haben Version {c}. „Zusammenführen und aktualisieren“ führt sie auf Ihren Build-Rechnern in Ihren Fork zusammen und führt die Tests aus; die neue Version des Forks folgt.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Fragt GitHub nach den neuesten Versionen. Nichts wird zusammengeführt oder installiert, bevor Sie „Zusammenführen und aktualisieren“ wählen.
+	Merge and update	Zusammenführen und aktualisieren
+	Starting the merge…	Zusammenführung wird gestartet…
+	Couldn't start the merge: {e}	Die Zusammenführung konnte nicht gestartet werden: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} wird in Ihren Fork zusammengeführt. Sobald die Version des Forks erschienen ist, bietet PdfCraft das Update an; Sie können weiterarbeiten.
+	Open the workflow page	Workflow-Seite öffnen
 	none	keine
 	Declared conformance: {shown}	Angegebene Konformität: {shown}
 	Output intent: {list}	Output Intent: {list}

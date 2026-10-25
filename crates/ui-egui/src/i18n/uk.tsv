@@ -786,6 +786,14 @@
 	Couldn't start the update: {e}	Не вдалося почати оновлення: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	У вас версія {c}. «Установити й перезапустити» завантажить нову версію, перевірить її та знову відкриє PdfCraft.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Запитує в GitHub останній випуск. Нічого не завантажується й не встановлюється, доки ви не виберете «Установити й перезапустити».
+	The original PdfCraft {v} is available.	Доступна оригінальна версія PdfCraft {v}.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	У вас версія {c}. «Об’єднати й оновити» об’єднає її з вашим форком на ваших машинах збирання й запустить тести; потім вийде новий випуск форку.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Запитує в GitHub останні випуски. Нічого не об’єднується й не встановлюється, доки ви не виберете «Об’єднати й оновити».
+	Merge and update	Об’єднати й оновити
+	Starting the merge…	Запуск об’єднання…
+	Couldn't start the merge: {e}	Не вдалося почати об’єднання: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} об’єднується з вашим форком. Коли вийде випуск форку, PdfCraft запропонує оновлення; можна працювати далі.
+	Open the workflow page	Відкрити сторінку робочого процесу
 	none	немає
 	Declared conformance: {shown}	Заявлена відповідність: {shown}
 	Output intent: {list}	Профіль виводу: {list}

@@ -402,6 +402,14 @@
 	Couldn't start the update: {e}	Δεν ήταν δυνατή η έναρξη της ενημέρωσης: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Έχετε την έκδοση {c}. Η «Εγκατάσταση και επανεκκίνηση» κατεβάζει τη νέα έκδοση, την ελέγχει και ανοίγει ξανά το PdfCraft.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Ρωτά το GitHub για την τελευταία έκδοση. Τίποτα δεν λαμβάνεται ή εγκαθίσταται μέχρι να επιλέξετε «Εγκατάσταση και επανεκκίνηση».
+	The original PdfCraft {v} is available.	Η αρχική έκδοση {v} του PdfCraft είναι διαθέσιμη.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Έχετε την έκδοση {c}. Η «Συγχώνευση και ενημέρωση» τη συγχωνεύει στο fork σας στους υπολογιστές μεταγλώττισής σας και εκτελεί τους ελέγχους· ακολουθεί η νέα έκδοση του fork.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Ρωτά το GitHub για τις τελευταίες εκδόσεις. Τίποτα δεν συγχωνεύεται ή εγκαθίσταται μέχρι να επιλέξετε «Συγχώνευση και ενημέρωση».
+	Merge and update	Συγχώνευση και ενημέρωση
+	Starting the merge…	Έναρξη συγχώνευσης…
+	Couldn't start the merge: {e}	Δεν ήταν δυνατή η έναρξη της συγχώνευσης: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	Το PdfCraft {v} συγχωνεύεται στο fork σας. Όταν κυκλοφορήσει η έκδοση του fork, το PdfCraft θα προσφέρει την ενημέρωση· μπορείτε να συνεχίσετε να εργάζεστε.
+	Open the workflow page	Άνοιγμα της σελίδας της ροής εργασιών
 	none	κανένα
 	Declared conformance: {shown}	Δηλωμένη συμμόρφωση: {shown}
 	Output intent: {list}	Προφίλ χρωματικής εξόδου: {list}

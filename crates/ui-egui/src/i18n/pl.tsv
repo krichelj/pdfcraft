@@ -781,6 +781,14 @@
 	Couldn't start the update: {e}	Nie można rozpocząć aktualizacji: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Masz wersję {c}. „Zainstaluj i uruchom ponownie” pobiera nową wersję, sprawdza ją i ponownie otwiera PdfCraft.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Sprawdza w GitHubie najnowsze wydanie. Nic nie jest pobierane ani instalowane, dopóki nie wybierzesz „Zainstaluj i uruchom ponownie”.
+	The original PdfCraft {v} is available.	Oryginalny PdfCraft {v} jest dostępny.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Masz wersję {c}. „Scal i zaktualizuj” scala ją z Twoim forkiem na Twoich maszynach do budowania i uruchamia testy; potem pojawi się nowe wydanie forka.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Sprawdza w GitHubie najnowsze wydania. Nic nie jest scalane ani instalowane, dopóki nie wybierzesz „Scal i zaktualizuj”.
+	Merge and update	Scal i zaktualizuj
+	Starting the merge…	Rozpoczynanie scalania…
+	Couldn't start the merge: {e}	Nie można rozpocząć scalania: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	Scalanie PdfCraft {v} z Twoim forkiem. Gdy wydanie forka będzie gotowe, PdfCraft zaproponuje aktualizację; możesz dalej pracować.
+	Open the workflow page	Otwórz stronę przepływu pracy
 	none	brak
 	Declared conformance: {shown}	Deklarowana zgodność: {shown}
 	Output intent: {list}	Profil wyjściowy: {list}

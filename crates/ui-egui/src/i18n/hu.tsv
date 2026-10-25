@@ -759,6 +759,14 @@
 	Couldn't start the update: {e}	A frissítés indítása nem sikerült: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Az Ön verziója: {c}. A „Telepítés és újraindítás” letölti az új verziót, ellenőrzi, majd újra megnyitja a PdfCraftot.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	A GitHubtól kérdezi le a legújabb kiadást. Semmi sem töltődik le és települ, amíg nem választja a „Telepítés és újraindítás” lehetőséget.
+	The original PdfCraft {v} is available.	Elérhető az eredeti PdfCraft {v}.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Az Ön verziója: {c}. Az „Egyesítés és frissítés” a fordítógépein beolvasztja az Ön forkjába, és lefuttatja a teszteket; ezután megjelenik a fork új kiadása.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	A GitHubtól kérdezi le a legújabb kiadásokat. Semmi sem egyesül és települ, amíg nem választja az „Egyesítés és frissítés” lehetőséget.
+	Merge and update	Egyesítés és frissítés
+	Starting the merge…	Az egyesítés indítása…
+	Couldn't start the merge: {e}	Az egyesítés indítása nem sikerült: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	A PdfCraft {v} egyesítése az Ön forkjába folyamatban. Amikor megjelenik a fork kiadása, a PdfCraft felajánlja a frissítést; addig is dolgozhat tovább.
+	Open the workflow page	A munkafolyamat oldalának megnyitása
 	none	nincs
 	Declared conformance: {shown}	Megadott megfelelőség: {shown}
 	Output intent: {list}	Kimeneti cél: {list}

@@ -5,13 +5,20 @@ use std::sync::Arc;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use pdfcraft_ui_egui::PdfCraftApp;
-use pdfcraft_ui_egui::updates::{Release, UpdateInstaller, UpdateSource, is_newer};
+use pdfcraft_ui_egui::updates::{Install, Latest, Release, SYNC_WORKFLOW_PAGE, SyncTrigger, UpdateInstaller, UpdateSource, is_newer};
 
+fn fork(v: &str) -> Release {
+    Release { url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{v}"), version: v.into() }
+}
+
+fn upstream(v: &str) -> Release {
+    Release { url: format!("https://github.com/storytold/pdfcraft/releases/tag/{v}"), version: v.into() }
+}
+
+/// A source whose fork has release `answer` and whose original PdfCraft is not ahead.
 fn source(answer: Result<&str, &str>) -> UpdateSource {
     let answer = answer.map(str::to_string).map_err(str::to_string);
-    Arc::new(move || {
-        answer.clone().map(|v| Release { url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{v}"), version: v, from_fork: true })
-    })
+    Arc::new(move || answer.clone().map(|v| Latest { fork: Some(fork(&v)), upstream: None }))
 }
 
 fn harness(answer: Result<&str, &str>) -> Harness<'static, PdfCraftApp> {
@@ -101,7 +108,7 @@ fn nothing_is_asked_until_the_user_checks() {
         let counted = counted.clone();
         app.update_source = Some(Arc::new(move || {
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/krichelj/pdfcraft/releases/tag/v99.0.0".into(), from_fork: true })
+            Ok(Latest { fork: Some(fork("v99.0.0")), upstream: None })
         }));
         app
     });
@@ -114,13 +121,13 @@ fn nothing_is_asked_until_the_user_checks() {
     h.get_by_label_contains("PdfCraft 99.0.0 is available");
 }
 
-/// An installer stand-in: records the versions it was asked for and answers `answer`.
-fn installer(answer: Result<(), &str>) -> (UpdateInstaller, Arc<std::sync::Mutex<Vec<String>>>) {
+/// An installer stand-in: records what it was asked to do and answers `answer`.
+fn installer(answer: Result<(), &str>) -> (UpdateInstaller, Arc<std::sync::Mutex<Vec<Install>>>) {
     let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
     let log = asked.clone();
     let answer = answer.map_err(str::to_string);
-    let install: UpdateInstaller = Arc::new(move |v: &str, from_fork: bool| {
-        log.lock().unwrap().push(if from_fork { v.to_string() } else { format!("{v} from upstream") });
+    let install: UpdateInstaller = Arc::new(move |what: &Install| {
+        log.lock().unwrap().push(what.clone());
         answer.clone()
     });
     (install, asked)
@@ -154,7 +161,7 @@ fn a_newer_release_is_installed_and_the_app_quits_to_relaunch() {
     assert!(h.query_by_label_contains("installed automatically").is_none());
     h.get_by_label("Install and relaunch").click();
     h.step();
-    assert_eq!(*asked.lock().unwrap(), ["v99.0.0"], "the installer gets the release tag");
+    assert_eq!(*asked.lock().unwrap(), [Install::Release("v99.0.0".into())], "the installer gets the release tag");
     assert!(closing(&h), "then the app quits, asking about unsaved work like the close button");
     h.run_steps(2);
     assert!(h.query_by_label_contains("is available").is_none(), "and the dialog is gone");
@@ -209,11 +216,7 @@ fn the_launch_check_is_silent_unless_a_newer_release_exists() {
             let mut app = PdfCraftApp::new();
             app.set_option("language", "en").unwrap();
             app.update_source = Some(Arc::new(move || {
-                let r = Ok(Release {
-                    url: format!("https://github.com/krichelj/pdfcraft/releases/tag/{latest}"),
-                    version: latest.clone(),
-                    from_fork: true,
-                });
+                let r = Ok(Latest { fork: Some(fork(&latest)), upstream: None });
                 counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 r
             }));
@@ -233,22 +236,111 @@ fn the_launch_check_is_silent_unless_a_newer_release_exists() {
     assert!(h.query_by_label_contains("Couldn't check for updates").is_none());
 }
 
-#[test]
-fn a_newer_upstream_release_is_installed_from_upstream() {
-    let (install, asked) = installer(Ok(()));
-    let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+/// A trigger stand-in: counts the times it was asked and answers `answer`.
+fn trigger(answer: Result<(), &str>) -> (SyncTrigger, Arc<std::sync::atomic::AtomicUsize>) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = calls.clone();
+    let answer = answer.map_err(str::to_string);
+    let t: SyncTrigger = Arc::new(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        answer.clone()
+    });
+    (t, calls)
+}
+
+/// The original PdfCraft at v99.0.0 while the fork's latest is this app's own version.
+fn upstream_ahead(install: Option<UpdateInstaller>, sync: Option<SyncTrigger>) -> Harness<'static, PdfCraftApp> {
+    Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
         let mut app = PdfCraftApp::new();
         app.set_option("language", "en").unwrap();
-        app.update_source = Some(Arc::new(|| {
-            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/storytold/pdfcraft/releases/tag/v99.0.0".into(), from_fork: false })
-        }));
-        app.update_installer = Some(install);
+        app.update_source =
+            Some(Arc::new(|| Ok(Latest { fork: Some(fork(concat!("v", env!("CARGO_PKG_VERSION")))), upstream: Some(upstream("v99.0.0")) })));
+        app.update_installer = install;
+        app.sync_trigger = sync;
         app
-    });
+    })
+}
+
+/// Run frames until the dialog shows `label`.
+fn until_shown(h: &mut Harness<'static, PdfCraftApp>, label: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while h.query_by_label_contains(label).is_none() {
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for {label:?}");
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a_newer_original_pdfcraft_is_merged_into_the_fork_never_installed() {
+    let (install, asked) = installer(Ok(()));
+    let (sync, calls) = trigger(Ok(()));
+    let mut h = upstream_ahead(Some(install), Some(sync));
     h.state_mut().execute("help.check_updates");
     settle(&mut h);
-    h.get_by_label_contains("PdfCraft 99.0.0 is available");
-    h.get_by_label("Install and relaunch").click();
-    h.step();
-    assert_eq!(*asked.lock().unwrap(), ["v99.0.0 from upstream"], "the installer is told it's the original repository's");
+    h.get_by_label_contains("The original PdfCraft 99.0.0 is available");
+    h.get_by_label_contains("Merge and update merges it into your fork");
+    h.get_by_label_contains("Nothing is merged or installed until you choose Merge and update");
+    // The original's build is never offered: installing it would drop the fork's changes.
+    assert!(h.query_by_label("Install and relaunch").is_none());
+    assert!(h.query_by_label("Download").is_none());
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0, "nothing starts before the click");
+    let shots = std::env::var("PDFCRAFT_UPDATE_SHOTS").ok();
+    if let Some(dir) = &shots {
+        h.render().unwrap().save(std::path::Path::new(dir).join("merge-offered.png")).unwrap();
+    }
+    h.get_by_label("Merge and update").click();
+    until_shown(&mut h, "Merging PdfCraft 99.0.0 into your fork");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "the Sync upstream workflow is started once");
+    assert_eq!(*asked.lock().unwrap(), [Install::AfterMerge("v99.0.0".into())], "then the installer waits for its release");
+    h.run_steps(3);
+    if let Some(dir) = &shots {
+        h.render().unwrap().save(std::path::Path::new(dir).join("merge-started.png")).unwrap();
+    }
+    assert!(!closing(&h), "the app keeps running while the fork's release is made");
+    assert!(h.query_by_label("Merge and update").is_none(), "not offered twice");
+    assert!(h.query_by_label_contains("Nothing is").is_none(), "no note about what happens before choosing");
+    h.get_by_label("Close").click();
+    h.run_steps(2);
+    assert!(h.query_by_label_contains("The original PdfCraft").is_none());
+}
+
+#[test]
+fn a_merge_that_cannot_start_here_offers_the_workflow_page_and_still_waits() {
+    let (install, asked) = installer(Ok(()));
+    let (sync, calls) = trigger(Err("the GitHub CLI (gh) isn't installed"));
+    let mut h = upstream_ahead(Some(install), Some(sync));
+    h.state_mut().execute("help.check_updates");
+    settle(&mut h);
+    h.get_by_label("Merge and update").click();
+    until_shown(&mut h, "Couldn't start the merge: the GitHub CLI (gh) isn't installed");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // The daily sync makes the same release: the installer waits for it anyway.
+    assert_eq!(*asked.lock().unwrap(), [Install::AfterMerge("v99.0.0".into())]);
+    assert!(!closing(&h));
+    h.get_by_label("Open the workflow page").click();
+    h.run_steps(2);
+    assert_eq!(h.state().last_opened_url.as_deref(), Some(SYNC_WORKFLOW_PAGE));
+    assert!(h.query_by_label_contains("Couldn't start the merge").is_none(), "and the dialog closes");
+}
+
+#[test]
+fn a_waiting_installer_that_cannot_start_says_why() {
+    let (install, _) = installer(Err("couldn't open the log"));
+    let (sync, _) = trigger(Ok(()));
+    let mut h = upstream_ahead(Some(install), Some(sync));
+    h.state_mut().execute("help.check_updates");
+    settle(&mut h);
+    h.get_by_label("Merge and update").click();
+    until_shown(&mut h, "Merging PdfCraft 99.0.0 into your fork");
+    h.get_by_label_contains("Couldn't start the update: couldn't open the log");
+}
+
+#[test]
+fn the_launch_check_opens_the_dialog_when_the_original_is_ahead() {
+    let (sync, calls) = trigger(Ok(()));
+    let mut h = upstream_ahead(None, Some(sync));
+    h.state_mut().check_for_updates_quietly();
+    until_shown(&mut h, "The original PdfCraft 99.0.0 is available");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0, "asking is not merging");
 }

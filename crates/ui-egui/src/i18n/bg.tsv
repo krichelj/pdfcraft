@@ -461,6 +461,14 @@
 	Couldn't start the update: {e}	Неуспешно стартиране на актуализацията: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Имате версия {c}. „Инсталиране и рестартиране“ изтегля новата версия, проверява я и отваря PdfCraft отново.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Проверява в GitHub за най-новото издание. Нищо не се изтегля и инсталира, докато не изберете „Инсталиране и рестартиране“.
+	The original PdfCraft {v} is available.	Налична е оригиналната PdfCraft {v}.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Имате версия {c}. „Сливане и актуализиране“ я слива с вашия форк на вашите машини за компилация и пуска тестовете; след това излиза новото издание на форка.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Проверява в GitHub за най-новите издания. Нищо не се слива и инсталира, докато не изберете „Сливане и актуализиране“.
+	Merge and update	Сливане и актуализиране
+	Starting the merge…	Сливането започва…
+	Couldn't start the merge: {e}	Неуспешно стартиране на сливането: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} се слива с вашия форк. Когато изданието на форка излезе, PdfCraft ще предложи актуализацията; можете да продължите работа.
+	Open the workflow page	Отваряне на страницата на работния процес
 	none	няма
 	Declared conformance: {shown}	Декларирано съответствие: {shown}
 	Output intent: {list}	Изходно предназначение: {list}
