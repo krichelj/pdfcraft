@@ -230,6 +230,19 @@ echo "upstream note" >>"$T/up-fixfail/NOTICE"
 up fixfail commit -qam "upstream: an ordinary change"
 sync fixfail "" STUB_LLM=fixfail
 
+# 6b. The merged assets don't check out (upstream changed an icon, not its hash; a merge that
+#     breaks xtask fails the same way). Without the LLM a person decides, shown the check's output;
+#     with it, the sync goes on to the fix loop, which runs that check.
+asset_change() {
+  upstream "$1"
+  printf '<!-- changed upstream -->\n' >>"$T/up-$1/assets/icons/accessibility.svg"
+  up "$1" commit -qam "upstream: an icon changed without its hash"
+}
+asset_change assetbad
+sync assetbad "" SYNC_NO_LLM=1
+asset_change assetllm
+sync assetllm
+
 # 7. Upstream edits the fork's own workflow where the fork changed it.
 upstream ownwf
 sed -i 's/^name: CI$/name: CI (upstream)/; s/runs-on: \[self-hosted, linux\]/runs-on: ubuntu-latest/' "$T/up-ownwf/.github/workflows/ci.yml"
@@ -292,6 +305,22 @@ check "  its fix committed on the branch before the release commit" bash -c \
 check "  the fixed tree is what is released" in_tree fixed SYNC_FIXED
 check "  and the record lists the fix" grep -q "  - Sync fix: marker (round 1)" "$T/s-fixed/docs/fork/releases/v$next.md"
 check "checks still failing after the LLM's rounds stop the sync" stopped fixfail "still fails its checks"
+
+check "merged assets that don't check out stop a sync without the LLM" stopped assetbad "don't check out"
+check "  showing what the check said" said assetbad "accessibility.svg"
+check "  with the LLM, the sync goes on to its fix loop" said assetllm "the on-call LLM's fix loop runs that check"
+check "  and the fix loop ran" grep -q "^oncall-llm fix " "$T/s-assetllm.llm"
+
+# rehash_catalogs rewrites only a catalog's own [[asset]] block. Upstream 0.13.0 lists catalogs
+# without a sha256 line; the old rewrite then put the catalog's hash on the next asset's line.
+rh="$T/rehash"
+mkdir -p "$rh/crates/ui-egui/src/i18n" "$rh/assets"
+printf 'key\tvalue\n' >"$rh/crates/ui-egui/src/i18n/xx.tsv"
+printf '[[asset]]\npath = "crates/ui-egui/src/i18n/xx.tsv"\nkind = "translation"\n\n[[asset]]\npath = "assets/icon.svg"\nsha256 = "1111"\n\n[[asset]]\npath = "crates/ui-egui/src/i18n/yy.tsv"\nsha256 = "2222"\n' >"$rh/ATTRIBUTION.toml"
+printf 'other\tstring\n' >"$rh/crates/ui-egui/src/i18n/yy.tsv"
+(cd "$rh" && . "$SRC/packaging/fork/lib.sh" && rehash_catalogs)
+check "rehash leaves the next asset's hash alone when a catalog has none" grep -q '^sha256 = "1111"$' "$rh/ATTRIBUTION.toml"
+check "  and still re-hashes a catalog that has one" grep -q "^sha256 = \"$(sha256sum "$rh/crates/ui-egui/src/i18n/yy.tsv" | cut -d' ' -f1)\"$" "$rh/ATTRIBUTION.toml"
 check "  before anything is pushed" bash -c "! grep -q 'stopping before the push' '$T/s-fixfail.out'"
 check "the LLM's fix touching a protected path stops the sync" stopped gprotected "protected path(s): .github/workflows/ci.yml"
 check "  before anything is pushed" bash -c "! grep -q 'stopping before the push' '$T/s-gprotected.out'"
