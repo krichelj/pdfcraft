@@ -474,6 +474,7 @@
 	Starting the merge…	正在开始合并…
 	Couldn't start the merge: {e}	无法开始合并：{e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	正在将 PdfCraft {v} 合并到你的分支。分支的新版本发布后，PdfCraft 会提示更新；你可以继续工作。
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	另一个更新已在进行中，或正在等待其发布。其安装程序会在安装任何内容之前询问您。
 	Open the workflow page	打开工作流页面
 	none	无
 	Declared conformance: {shown}	声明的一致性：{shown}

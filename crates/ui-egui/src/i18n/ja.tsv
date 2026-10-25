@@ -796,6 +796,7 @@
 	Starting the merge…	マージを開始しています…
 	Couldn't start the merge: {e}	マージを開始できませんでした: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} をあなたのフォークにマージしています。フォークのリリースが公開されると、PdfCraft がアップデートを案内します。作業はそのまま続けられます。
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	別の更新がすでに進行中か、そのリリースを待っています。インストーラーは何かをインストールする前に確認します。
 	Open the workflow page	ワークフローのページを開く
 	none	なし
 	Declared conformance: {shown}	宣言された準拠規格: {shown}

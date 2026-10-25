@@ -560,6 +560,8 @@ pub struct PdfCraftApp {
     /// How to install a newer release (the desktop app sets it when it runs from an installed
     /// macOS app bundle; see `updates`).
     pub update_installer: Option<updates::UpdateInstaller>,
+    /// Whether an installer is already running (the desktop app sets it with the installer).
+    pub installer_busy: Option<updates::InstallerBusy>,
     /// How to start the fork's Sync upstream workflow, which merges a newer original PdfCraft
     /// into the fork (the desktop app sets it; see `updates`).
     pub sync_trigger: Option<updates::SyncTrigger>,
@@ -942,6 +944,7 @@ impl PdfCraftApp {
             dialog: None,
             update_source: None,
             update_installer: None,
+            installer_busy: None,
             sync_trigger: None,
             updates: updates::Updates::default(),
             printer_source: None,

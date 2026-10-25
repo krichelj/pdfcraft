@@ -185,6 +185,32 @@ fn an_installer_that_cannot_start_says_why_and_the_app_stays() {
 }
 
 #[test]
+fn no_second_installer_is_offered_while_one_runs() {
+    // Merge and update's installer is waiting for its release (it holds the installers' lock):
+    // the fork's release appearing must not start Install and relaunch beside it.
+    let (install, asked) = installer(Ok(()));
+    let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.update_source = Some(source(Ok("v99.0.0")));
+        app.update_installer = Some(install);
+        app.installer_busy = Some(Arc::new(|| true));
+        app
+    });
+    h.state_mut().execute("help.check_updates");
+    settle(&mut h);
+    h.get_by_label_contains("PdfCraft 99.0.0 is available");
+    h.get_by_label_contains("Another update is already in progress or waiting for its release");
+    assert!(h.query_by_label("Install and relaunch").is_none(), "no second installer");
+    assert!(asked.lock().unwrap().is_empty());
+    // Once nothing runs, the next check offers the install again.
+    h.state_mut().installer_busy = Some(Arc::new(|| false));
+    h.state_mut().execute("help.check_updates");
+    settle(&mut h);
+    h.get_by_label("Install and relaunch");
+}
+
+#[test]
 fn an_up_to_date_app_offers_nothing_to_install() {
     let (install, asked) = installer(Ok(()));
     let mut h = harness_with(Ok(concat!("v", env!("CARGO_PKG_VERSION"))), Some(install));

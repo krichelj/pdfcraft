@@ -468,6 +468,7 @@
 	Starting the merge…	Сливането започва…
 	Couldn't start the merge: {e}	Неуспешно стартиране на сливането: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} се слива с вашия форк. Когато изданието на форка излезе, PdfCraft ще предложи актуализацията; можете да продължите работа.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Друга актуализация вече е в ход или чака своето издание. Нейният инсталатор ще ви попита, преди да инсталира каквото и да е.
 	Open the workflow page	Отваряне на страницата на работния процес
 	none	няма
 	Declared conformance: {shown}	Декларирано съответствие: {shown}

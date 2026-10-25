@@ -405,6 +405,8 @@ fn app_creator<'a>(
         if let (Ok(exe), Some(logs)) = (std::env::current_exe(), logs)
             && let Some(installer) = updates::Installer::bundled(&exe, &logs)
         {
+            let busy = installer.clone();
+            app.installer_busy = Some(std::sync::Arc::new(move || busy.busy()));
             app.update_installer = Some(std::sync::Arc::new(move |what: &pdfcraft_ui_egui::updates::Install| installer.start(what)));
         }
         // Once per launch, quietly: the Updates dialog opens only when a newer release exists.

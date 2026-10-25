@@ -409,6 +409,7 @@
 	Starting the merge…	Έναρξη συγχώνευσης…
 	Couldn't start the merge: {e}	Δεν ήταν δυνατή η έναρξη της συγχώνευσης: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	Το PdfCraft {v} συγχωνεύεται στο fork σας. Όταν κυκλοφορήσει η έκδοση του fork, το PdfCraft θα προσφέρει την ενημέρωση· μπορείτε να συνεχίσετε να εργάζεστε.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Μια άλλη ενημέρωση βρίσκεται ήδη σε εξέλιξη ή περιμένει την έκδοσή της. Το πρόγραμμα εγκατάστασής της θα σας ρωτήσει πριν εγκαταστήσει οτιδήποτε.
 	Open the workflow page	Άνοιγμα της σελίδας της ροής εργασιών
 	none	κανένα
 	Declared conformance: {shown}	Δηλωμένη συμμόρφωση: {shown}

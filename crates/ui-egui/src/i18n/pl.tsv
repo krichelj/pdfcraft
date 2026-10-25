@@ -788,6 +788,7 @@
 	Starting the merge…	Rozpoczynanie scalania…
 	Couldn't start the merge: {e}	Nie można rozpocząć scalania: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	Scalanie PdfCraft {v} z Twoim forkiem. Gdy wydanie forka będzie gotowe, PdfCraft zaproponuje aktualizację; możesz dalej pracować.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Inna aktualizacja jest już w toku lub czeka na swoje wydanie. Jej instalator zapyta Cię, zanim cokolwiek zainstaluje.
 	Open the workflow page	Otwórz stronę przepływu pracy
 	none	brak
 	Declared conformance: {shown}	Deklarowana zgodność: {shown}

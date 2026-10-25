@@ -870,6 +870,7 @@ key	Space	Mezerník
 	Starting the merge…	Spouští se sloučení…
 	Couldn't start the merge: {e}	Sloučení nelze spustit: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} se slučuje do vašeho forku. Až vyjde vydání forku, PdfCraft nabídne aktualizaci; můžete pokračovat v práci.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Jiná aktualizace již probíhá nebo čeká na své vydání. Její instalátor se vás zeptá, než cokoli nainstaluje.
 	Open the workflow page	Otevřít stránku workflow
 	none	žádná
 	Declared conformance: {shown}	Deklarovaná shoda: {shown}

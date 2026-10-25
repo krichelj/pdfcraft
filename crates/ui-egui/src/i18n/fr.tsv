@@ -769,6 +769,7 @@
 	Starting the merge…	Démarrage de la fusion…
 	Couldn't start the merge: {e}	Impossible de lancer la fusion : {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	Fusion de PdfCraft {v} dans votre fork. Quand la version du fork sera publiée, PdfCraft proposera la mise à jour ; vous pouvez continuer à travailler.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Une autre mise à jour est déjà en cours ou attend sa version. Son programme d’installation vous demandera avant d’installer quoi que ce soit.
 	Open the workflow page	Ouvrir la page du workflow
 	none	aucun
 	Declared conformance: {shown}	Conformité déclarée : {shown}

@@ -795,6 +795,7 @@
 	Starting the merge…	جارٍ بدء الدمج…
 	Couldn't start the merge: {e}	تعذّر بدء الدمج: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	جارٍ دمج PdfCraft {v} في نسختك المشتقة. عند صدور إصدار نسختك، يعرض PdfCraft التحديث؛ يمكنك متابعة العمل.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	تحديث آخر قيد التنفيذ بالفعل أو ينتظر صدور إصداره. سيسألك مثبّته قبل أن يثبّت أي شيء.
 	Open the workflow page	فتح صفحة سير العمل
 	none	لا شيء
 	Declared conformance: {shown}	المطابقة المعلنة: {shown}

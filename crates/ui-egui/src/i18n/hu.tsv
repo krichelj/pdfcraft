@@ -766,6 +766,7 @@
 	Starting the merge…	Az egyesítés indítása…
 	Couldn't start the merge: {e}	Az egyesítés indítása nem sikerült: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	A PdfCraft {v} egyesítése az Ön forkjába folyamatban. Amikor megjelenik a fork kiadása, a PdfCraft felajánlja a frissítést; addig is dolgozhat tovább.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Egy másik frissítés már folyamatban van, vagy a kiadására vár. A telepítője megkérdezi Önt, mielőtt bármit telepítene.
 	Open the workflow page	A munkafolyamat oldalának megnyitása
 	none	nincs
 	Declared conformance: {shown}	Megadott megfelelőség: {shown}

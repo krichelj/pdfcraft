@@ -134,6 +134,9 @@ pub struct Installer {
     apps: PathBuf,
     /// Where the installer's output goes (`update.log`).
     log: PathBuf,
+    /// The installers' lock (`PDFCRAFT_LOCK`): a symbolic link to the running installer's
+    /// process id, so one installer runs at a time and this app can tell one is pending.
+    lock: PathBuf,
 }
 
 impl Installer {
@@ -149,6 +152,9 @@ impl Installer {
             script,
             apps: bundle.parent().map_or_else(PathBuf::new, Path::to_path_buf),
             log: logs.join("update.log"),
+            // The same path install.sh uses by default ($TMPDIR is per user on macOS), so the
+            // curl one-liner and the app's installers share one lock.
+            lock: std::env::temp_dir().join(INSTALLER_LOCK),
         })
     }
 
@@ -158,12 +164,20 @@ impl Installer {
     /// waits for that release and asks before quitting the app.
     fn command(&self, what: &Install, pid: u32) -> Result<std::process::Command, String> {
         let mut c = std::process::Command::new("/bin/bash");
-        c.arg(&self.script).env("PDFCRAFT_APPS", &self.apps).stdin(std::process::Stdio::null());
+        c.arg(&self.script).env("PDFCRAFT_APPS", &self.apps).env("PDFCRAFT_LOCK", &self.lock).stdin(std::process::Stdio::null());
         match what {
             Install::Release(tag) => c.env("PDFCRAFT_VERSION", tag_version(tag)?).env("PDFCRAFT_WAIT_PID", pid.to_string()),
             Install::AfterMerge(tag) => c.env("PDFCRAFT_AWAIT_BASE", upstream_base(tag)?),
         };
         Ok(c)
+    }
+
+    /// Whether an installer is running: Install and relaunch, or Merge and update's installer
+    /// waiting for its release. The Updates dialog offers no second installer meanwhile.
+    pub fn busy(&self) -> bool {
+        let Ok(target) = std::fs::read_link(&self.lock) else { return false };
+        let Ok(pid) = target.to_string_lossy().parse::<u32>() else { return false };
+        alive(pid)
     }
 
     /// Start the installer in the background; it outlives this app.
@@ -227,8 +241,13 @@ impl GitHubCli {
         if let Ok(out) = run_for(lookup, GH_TIMEOUT)
             && out.status.success()
         {
-            let found = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-            if found.is_absolute() && executable(&found) {
+            // A login profile may print first (a banner, a fortune): the answer is the last line.
+            let text = String::from_utf8_lossy(&out.stdout);
+            let found = text.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(PathBuf::from);
+            if let Some(found) = found
+                && found.is_absolute()
+                && executable(&found)
+            {
                 return Ok(GitHubCli { program: found });
             }
         }
@@ -255,6 +274,20 @@ impl GitHubCli {
     }
 }
 
+/// The installers' lock, in the temporary folder (install.sh's default `PDFCRAFT_LOCK`).
+const INSTALLER_LOCK: &str = "pdfcraft-installer.lock";
+
+/// Whether process `pid` is running (`kill -0`, which signals nothing).
+fn alive(pid: u32) -> bool {
+    std::process::Command::new("/bin/kill")
+        .args(["-0", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// Whether `path` is a file this user may run.
 fn executable(path: &Path) -> bool {
     #[cfg(unix)]
@@ -268,43 +301,108 @@ fn executable(path: &Path) -> bool {
     }
 }
 
+/// What a finished program wrote is still in its pipes when it exits; this is how long to wait for
+/// it, past the exit, before giving up on anything it started that keeps the pipes open.
+const OUTPUT_GRACE: Duration = Duration::from_secs(2);
+/// The most of each stream kept: enough for any message gh prints.
+const OUTPUT_LIMIT: usize = 64 * 1024;
+
+/// One read from a child's stdout (`false`) or stderr (`true`); `None` when that stream closed.
+type Chunk = (bool, Option<Vec<u8>>);
+
 /// Run `command` to its end, or kill it after `timeout`. Its output is read while it runs, so a
-/// chatty command can't fill the pipe and stall.
+/// chatty command can't fill the pipe and stall. The timeout bounds the whole call: a program
+/// that exits while something it started still holds its output open (a login shell's background
+/// job) is waited on for at most [`OUTPUT_GRACE`] more, never for that job.
 fn run_for(mut command: std::process::Command, timeout: Duration) -> Result<std::process::Output, String> {
+    let name = command.get_program().to_string_lossy().into_owned();
+    let deadline = Instant::now().checked_add(timeout).ok_or_else(|| format!("a timeout of {timeout:?} is too long"))?;
     let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("couldn't run {} ({e})", command.get_program().to_string_lossy()))?;
-    let drain = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                // At most 64 KiB is kept: enough for any message gh prints.
-                let _ = pipe.by_ref().take(64 * 1024).read_to_end(&mut bytes);
-                let _ = std::io::copy(&mut pipe, &mut std::io::sink());
-            }
-            bytes
-        })
-    };
-    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let deadline = Instant::now() + timeout;
+        .map_err(|e| format!("couldn't run {name} ({e})"))?;
+    let (tx, rx) = std::sync::mpsc::channel::<Chunk>();
+    read_into(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), false, tx.clone());
+    read_into(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>), true, tx);
+    let mut collected = Collected::default();
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) if Instant::now() < deadline => {
+                // Waits at most 20 ms: the pause between looks, spent reading what arrives.
+                collected.take(&rx, Duration::from_millis(20));
+            }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("{} didn't finish within {}s", command.get_program().to_string_lossy(), timeout.as_secs()));
+                return Err(format!("{name} didn't finish within {}s", timeout.as_secs()));
             }
-            Err(e) => return Err(format!("couldn't wait for {} ({e})", command.get_program().to_string_lossy())),
+            Err(e) => return Err(format!("couldn't wait for {name} ({e})")),
         }
     };
-    let stdout = out.join().unwrap_or_default();
-    let stderr = err.join().unwrap_or_default();
-    Ok(std::process::Output { status, stdout, stderr })
+    let grace_end = Instant::now().checked_add(OUTPUT_GRACE).map_or(deadline, |g| deadline.min(g));
+    while !collected.both_closed() {
+        let Some(left) = grace_end.checked_duration_since(Instant::now()) else { break };
+        if left.is_zero() || !collected.take(&rx, left) {
+            break;
+        }
+    }
+    Ok(std::process::Output { status, stdout: collected.out, stderr: collected.err })
+}
+
+/// Read `pipe` on its own thread, sending each chunk and then `None` when it closes. The thread
+/// ends with the pipe; nobody waits for it.
+fn read_into(pipe: Option<Box<dyn Read + Send>>, is_err: bool, tx: std::sync::mpsc::Sender<Chunk>) {
+    let Some(mut pipe) = pipe else {
+        let _ = tx.send((is_err, None));
+        return;
+    };
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match pipe.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send((is_err, Some(buf.get(..n).unwrap_or_default().to_vec()))).is_err() {
+                        return; // the caller stopped listening
+                    }
+                }
+            }
+        }
+        let _ = tx.send((is_err, None));
+    });
+}
+
+/// A child's output as it arrives, each stream kept up to [`OUTPUT_LIMIT`].
+#[derive(Default)]
+struct Collected {
+    out: Vec<u8>,
+    err: Vec<u8>,
+    closed: u8,
+}
+
+impl Collected {
+    /// Take one chunk, waiting at most `wait`. False when none came (or no reader is left).
+    fn take(&mut self, rx: &std::sync::mpsc::Receiver<Chunk>, wait: Duration) -> bool {
+        match rx.recv_timeout(wait) {
+            Ok((is_err, Some(bytes))) => {
+                let into = if is_err { &mut self.err } else { &mut self.out };
+                let room = OUTPUT_LIMIT.saturating_sub(into.len());
+                into.extend(bytes.iter().take(room));
+                true
+            }
+            Ok((_, None)) => {
+                self.closed = self.closed.saturating_add(1);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn both_closed(&self) -> bool {
+        self.closed >= 2
+    }
 }
 
 #[cfg(test)]
@@ -372,7 +470,12 @@ mod tests {
     }
 
     fn installer() -> Installer {
-        Installer { script: "/A/PdfCraft.app/Contents/Resources/install.sh".into(), apps: "/A".into(), log: "/l/update.log".into() }
+        Installer {
+            script: "/A/PdfCraft.app/Contents/Resources/install.sh".into(),
+            apps: "/A".into(),
+            log: "/l/update.log".into(),
+            lock: "/t/pdfcraft-installer.lock".into(),
+        }
     }
 
     #[test]
@@ -385,6 +488,7 @@ mod tests {
         assert_eq!(env["PDFCRAFT_VERSION"], "0.8.0-p2");
         assert_eq!(env["PDFCRAFT_APPS"], "/A");
         assert_eq!(env["PDFCRAFT_WAIT_PID"], "4242");
+        assert_eq!(env["PDFCRAFT_LOCK"], "/t/pdfcraft-installer.lock", "one lock for every installer");
         assert!(!env.contains_key("PDFCRAFT_REPO"), "only the fork's builds are installed: {env:?}");
         assert!(!env.contains_key("PDFCRAFT_AWAIT_BASE"));
         for bad in ["", "v", "0.8.0; rm -rf ~", "$(id)", "0.8.0\nx", "../../x", &"9".repeat(65)] {
@@ -398,6 +502,7 @@ mod tests {
         let env = env_of(&c);
         assert_eq!(env["PDFCRAFT_AWAIT_BASE"], "0.12.0");
         assert_eq!(env["PDFCRAFT_APPS"], "/A");
+        assert_eq!(env["PDFCRAFT_LOCK"], "/t/pdfcraft-installer.lock");
         // The app keeps running while the release is made: nothing waits for it to quit.
         assert!(!env.contains_key("PDFCRAFT_WAIT_PID"), "{env:?}");
         assert!(!env.contains_key("PDFCRAFT_VERSION") && !env.contains_key("PDFCRAFT_REPO"), "{env:?}");
@@ -405,6 +510,16 @@ mod tests {
         for bad in ["", "v0.12", "v0.12.0.1", "v0.012.0", "v1234567890.0.0", "nightly", "v0.12.0; id", "v0.x.0"] {
             assert!(installer().command(&Install::AfterMerge(bad.into()), 1).is_err(), "{bad:?}");
         }
+    }
+
+    /// Held while a test writes fake programs and runs them. A child forked by another test thread
+    /// while a script is still open for writing makes its exec fail with "Text file busy".
+    #[cfg(unix)]
+    static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(unix)]
+    fn exec_lock() -> std::sync::MutexGuard<'static, ()> {
+        EXEC.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// A temporary folder for fake programs.
@@ -427,6 +542,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_github_cli_is_found_where_macs_keep_it_then_on_the_login_path() {
+        let _exec = exec_lock();
         let dir = scratch("find");
         let missing = dir.join("missing-gh");
         let not_executable = dir.join("plain-gh");
@@ -440,6 +556,10 @@ mod tests {
         let shell = dir.join("zsh");
         script(&shell, &format!("[ \"$1\" = -lc ] && [ \"$2\" = 'command -v gh' ] && echo '{}'", gh.display()));
         assert_eq!(GitHubCli::find(std::slice::from_ref(&missing), &shell).unwrap().program, gh);
+        // A login profile that prints a banner first: the answer is the last line.
+        let chatty_shell = dir.join("chatty-zsh");
+        script(&chatty_shell, &format!("echo 'Welcome back'; echo; echo '{}'", gh.display()));
+        assert_eq!(GitHubCli::find(std::slice::from_ref(&missing), &chatty_shell).unwrap().program, gh);
         // A shell that finds nothing, or names something that isn't a program.
         let empty_shell = dir.join("empty-zsh");
         script(&empty_shell, "exit 1");
@@ -455,6 +575,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_sync_workflow_is_started_on_the_fork_and_failures_say_why() {
+        let _exec = exec_lock();
         let dir = scratch("run");
         let args = dir.join("args");
         let gh = dir.join("gh");
@@ -474,6 +595,49 @@ mod tests {
         let err = cli.run_sync(Duration::from_millis(300)).unwrap_err();
         assert!(err.contains("didn't finish"), "{err}");
         assert!(started.elapsed() < Duration::from_secs(10), "killed at the deadline");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A login shell's background job keeps the output pipe open after the shell exits: the
+    /// answer still comes back within the timeout, not when the job ends.
+    #[cfg(unix)]
+    #[test]
+    fn a_job_left_holding_the_output_does_not_hold_up_the_answer() {
+        let _exec = exec_lock();
+        let mut c = std::process::Command::new("/bin/sh");
+        c.args(["-c", "sleep 8 & echo /opt/homebrew/bin/gh"]);
+        let started = Instant::now();
+        let out = run_for(c, Duration::from_secs(30)).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert!(out.status.success());
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/opt/homebrew/bin/gh");
+        // And the timeout still bounds a job that runs past it while holding the pipe.
+        let mut c = std::process::Command::new("/bin/sh");
+        c.args(["-c", "sleep 8 & sleep 8"]);
+        let started = Instant::now();
+        assert!(run_for(c, Duration::from_millis(300)).unwrap_err().contains("didn't finish"));
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_running_installer_is_seen_through_its_lock() {
+        let _exec = exec_lock();
+        let dir = scratch("lock");
+        let lock = dir.join(INSTALLER_LOCK);
+        let i = Installer { lock: lock.clone(), ..installer() };
+        assert!(!i.busy(), "no lock");
+        std::os::unix::fs::symlink(std::process::id().to_string(), &lock).unwrap();
+        assert!(i.busy(), "a live installer (this process)");
+        std::fs::remove_file(&lock).unwrap();
+        let mut gone = std::process::Command::new("/bin/sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let dead = gone.id();
+        gone.wait().unwrap();
+        std::os::unix::fs::symlink(dead.to_string(), &lock).unwrap();
+        assert!(!i.busy(), "a lock left by an installer that died");
+        std::fs::remove_file(&lock).unwrap();
+        std::os::unix::fs::symlink("not-a-pid", &lock).unwrap();
+        assert!(!i.busy(), "a lock that names no process");
         let _ = std::fs::remove_dir_all(dir);
     }
 

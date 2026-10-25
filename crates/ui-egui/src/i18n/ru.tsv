@@ -789,6 +789,7 @@
 	Starting the merge…	Запуск объединения…
 	Couldn't start the merge: {e}	Не удалось начать объединение: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} объединяется с вашим форком. Когда выйдет выпуск форка, PdfCraft предложит обновление; можно продолжать работу.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Другое обновление уже выполняется или ожидает своего выпуска. Его установщик спросит вас, прежде чем что-либо устанавливать.
 	Open the workflow page	Открыть страницу рабочего процесса
 	none	нет
 	Declared conformance: {shown}	Заявленное соответствие: {shown}

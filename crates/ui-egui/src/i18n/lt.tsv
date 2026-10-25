@@ -695,6 +695,7 @@
 	Starting the merge…	Pradedamas suliejimas…
 	Couldn't start the merge: {e}	Nepavyko pradėti suliejimo: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	„PdfCraft“ {v} suliejama su jūsų atšaka. Kai bus išleista atšakos versija, „PdfCraft“ pasiūlys atnaujinimą; galite toliau dirbti.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Kitas naujinimas jau vykdomas arba laukia savo leidimo. Jo diegimo programa paklaus jūsų prieš ką nors įdiegdama.
 	Open the workflow page	Atverti darbo eigos puslapį
 	Later in tab order	Vėlesnė skirtukų tvarka
 	Layers	Sluoksniai

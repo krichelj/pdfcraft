@@ -18,7 +18,12 @@
 # When the original has a newer release, Check for updates > Merge and update starts the fork's
 # Sync upstream workflow (which merges it into the fork, tests it and releases <its version>-p1)
 # and runs this script with PDFCRAFT_AWAIT_BASE set to that version: it waits until the fork's
-# latest release is built on it, then asks whether to install it now.
+# latest release is built on it, then always asks whether to install it now (Later, or no answer
+# within an hour, leaves everything as it is; Check for updates offers the release afterwards).
+#
+# One installer runs at a time, whatever started it: a lock (a symbolic link to the installer's
+# process id, created atomically) is held from the wait for a release, or from the swap, to the
+# end. An installer that finds the release already installed does nothing more.
 #
 # Env: PDFCRAFT_VERSION      a release such as 0.8.0-p1 (default: the latest)
 #      PDFCRAFT_APPS         where PdfCraft.app goes (default: /Applications)
@@ -28,12 +33,16 @@
 #      PDFCRAFT_AWAIT_BASE   wait for the fork's latest release to be built on this version (X.Y.Z)
 #      PDFCRAFT_AWAIT_SECS   how long to wait for that release (default 21600, six hours)
 #      PDFCRAFT_AWAIT_POLL   seconds between looks at the latest release (default 60)
+#      PDFCRAFT_LOCK         the installers' lock (default: $TMPDIR/pdfcraft-installer.lock, per user)
 set -euo pipefail
 REPO=krichelj/pdfcraft
 APPS="${PDFCRAFT_APPS:-/Applications}"
 WAIT_PID="${PDFCRAFT_WAIT_PID:-}"
 AWAIT_BASE="${PDFCRAFT_AWAIT_BASE:-}"
-lock=""
+LOCK="${PDFCRAFT_LOCK:-${TMPDIR:-/tmp}/pdfcraft-installer.lock}"
+own_lock=""
+work=""
+trap '[ -z "$work" ] || rm -rf "$work"; [ -z "$own_lock" ] || rm -f "$LOCK"' EXIT
 die() {
   echo "error: $*" >&2
   if [ -n "$WAIT_PID" ] || [ -n "$AWAIT_BASE" ]; then
@@ -77,6 +86,38 @@ fi
 [ "$(uname -s)" = Darwin ] || die "this installs the macOS app; run it on a Mac"
 [ "$(uname -m)" = arm64 ] || die "these builds are for Apple silicon (M1 and later), and this Mac is $(uname -m)"
 
+# The live installer holding the lock, or nothing.
+lock_holder() {
+  local pid
+  pid="$(readlink "$LOCK" 2>/dev/null || true)"
+  case "$pid" in "" | *[!0-9]*) return 0 ;; esac
+  if kill -0 "$pid" 2>/dev/null; then echo "$pid"; fi
+}
+# Usage: take_lock <seconds to wait for another installer>. Fails when it is still held after that.
+take_lock() {
+  local waited=0 stale
+  # Anything but our kind of lock there (a directory, a file) is not ours to remove.
+  if [ -e "$LOCK" ] && [ ! -L "$LOCK" ]; then return 1; fi
+  # -n: never follow an existing link (into a directory it would create the link inside it).
+  until ln -sn "$$" "$LOCK" 2>/dev/null; do
+    [ -L "$LOCK" ] || return 1
+    if [ -z "$(lock_holder)" ]; then
+      # Its installer died: take the lock over, unless another installer just did.
+      stale="$(readlink "$LOCK" 2>/dev/null || true)"
+      if [ "$(readlink "$LOCK" 2>/dev/null || true)" = "$stale" ]; then rm -f "$LOCK" || return 1; fi
+      continue
+    fi
+    [ "$waited" -lt "$1" ] || return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+  own_lock=1
+}
+# The version of the PdfCraft installed in $APPS (its Info.plist's PdfCraftVersion), or nothing.
+installed_version() {
+  plutil -extract PdfCraftVersion raw -o - "$APPS/PdfCraft.app/Contents/Info.plist" 2>/dev/null || true
+}
+
 # The latest release's page redirects to its tag: no API call, so no API rate limit.
 latest() {
   local url
@@ -86,20 +127,11 @@ latest() {
 
 version="${PDFCRAFT_VERSION:-}"
 if [ -n "$AWAIT_BASE" ]; then
-  # One waiting installer at a time: a second Merge and update while one waits adds nothing.
-  lock="${TMPDIR:-/tmp}/pdfcraft-await-$(id -u).lock"
-  if ! mkdir "$lock" 2>/dev/null; then
-    other="$(cat "$lock/pid" 2>/dev/null || true)"
-    if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
-      echo "==> another installer (pid $other) is already waiting for the fork's release; nothing to do"
-      lock=""
-      exit 0
-    fi
-    rm -rf "$lock"
-    mkdir "$lock" || die "couldn't create $lock"
+  # A second Merge and update, or one while an update installs, adds nothing.
+  if ! take_lock 0; then
+    echo "==> another installer (pid $(lock_holder)) is already running; nothing to do"
+    exit 0
   fi
-  echo $$ >"$lock/pid"
-  trap 'rm -rf "$lock"' EXIT
   poll="${PDFCRAFT_AWAIT_POLL:-60}"
   case "$poll" in "" | *[!0-9]*) die "PDFCRAFT_AWAIT_POLL is not a number of seconds: $poll" ;; esac
   waited=0
@@ -127,7 +159,6 @@ esac
 base="https://github.com/$REPO/releases/download/v$version"
 zip="pdfcraft-$version-macos-aarch64.zip"
 work="$(mktemp -d)"
-trap 'rm -rf "$work" ${lock:+"$lock"}' EXIT
 
 echo "==> PdfCraft $version: downloading $zip"
 curl -fsSL -o "$work/SHA256SUMS.txt" "$base/SHA256SUMS.txt" || die "couldn't download $base/SHA256SUMS.txt"
@@ -152,28 +183,46 @@ if [ -n "$WAIT_PID" ]; then
     sleep 1
     waited=$((waited + 1))
   done
-elif pgrep -xq PdfCraft; then
-  if [ -n "$AWAIT_BASE" ]; then
-    # Hours may have passed since Merge and update: ask before quitting what the user is doing.
-    # shellcheck disable=SC2016 # AppleScript, not shell
-    answer="$(osascript -e 'on run argv' \
-      -e 'display dialog ("PdfCraft " & item 1 of argv & " is ready: your fork with PdfCraft " & item 2 of argv & " merged in. Install it now? PdfCraft quits first and asks about unsaved changes.") buttons {"Later", "Install now"} default button "Install now" with title "Update PdfCraft" giving up after 3600' \
-      -e 'end run' "$version" "$AWAIT_BASE" 2>/dev/null || true)"
-    case "$answer" in
-      *"button returned:Install now"*) ;;
-      *)
-        echo "==> PdfCraft $version left for later; Check for updates offers it"
-        exit 0
-        ;;
-    esac
-  fi
+  take_lock "${PDFCRAFT_WAIT_SECS:-3600}" || die "another PdfCraft installer (pid $(lock_holder)) is still running"
+elif [ -z "$AWAIT_BASE" ]; then
+  take_lock 0 || die "another PdfCraft installer (pid $(lock_holder)) is running; try again once it has finished"
+fi
+
+# Another installer may have put this release in place already: then there is nothing to do.
+if [ "$(installed_version)" = "$version" ]; then
+  echo "==> PdfCraft $version is already installed in $APPS"
+  if [ -n "$WAIT_PID" ] && [ "${PDFCRAFT_NO_OPEN:-}" != 1 ] && ! pgrep -xq PdfCraft; then open "$APPS/PdfCraft.app"; fi
+  exit 0
+fi
+
+if [ -n "$AWAIT_BASE" ]; then
+  # Hours may have passed since Merge and update: always ask, and only quit PdfCraft on a yes.
+  running=""
+  if pgrep -xq PdfCraft; then running=1; fi
+  then_what="PdfCraft opens when it is in place."
+  [ -z "$running" ] || then_what="PdfCraft quits first, asking about unsaved changes, and reopens."
+  # shellcheck disable=SC2016 # AppleScript, not shell
+  answer="$(osascript -e 'on run argv' \
+    -e 'display dialog ("PdfCraft " & item 1 of argv & " is ready: your fork with PdfCraft " & item 2 of argv & " merged in. Install it now? " & item 3 of argv) buttons {"Later", "Install now"} default button "Install now" with title "Update PdfCraft" giving up after 3600' \
+    -e 'end run' "$version" "$AWAIT_BASE" "$then_what" 2>/dev/null || true)"
+  case "$answer" in
+    *"button returned:Install now"*) ;;
+    *)
+      echo "==> PdfCraft $version left for later; Check for updates offers it"
+      exit 0
+      ;;
+  esac
+fi
+if [ -z "$WAIT_PID" ] && pgrep -xq PdfCraft; then
   echo "==> Quitting PdfCraft"
   osascript -e 'tell application "PdfCraft" to quit' >/dev/null 2>&1 || true
-  for _ in $(seq 1 60); do
-    pgrep -xq PdfCraft || break
+  # As long as Install and relaunch waits: the user may be saving work in a Save panel.
+  waited=0
+  while pgrep -xq PdfCraft; do
+    [ "$waited" -lt "${PDFCRAFT_WAIT_SECS:-3600}" ] || die "PdfCraft is still running, so $version wasn't installed; quit it and update again"
     sleep 1
+    waited=$((waited + 1))
   done
-  ! pgrep -xq PdfCraft || die "PdfCraft is still running; quit it and run this again"
 fi
 
 mkdir -p "$APPS"

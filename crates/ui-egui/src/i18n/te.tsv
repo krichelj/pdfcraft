@@ -770,6 +770,7 @@ comment menu	Edit	సవరించు
 	Starting the merge…	విలీనాన్ని ప్రారంభిస్తోంది…
 	Couldn't start the merge: {e}	విలీనాన్ని ప్రారంభించడం సాధ్యం కాలేదు: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v}ని మీ ఫోర్క్‌లో విలీనం చేస్తోంది. ఫోర్క్ విడుదల వచ్చినప్పుడు, PdfCraft అప్‌డేట్‌ను అందిస్తుంది; మీరు పని కొనసాగించవచ్చు.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	మరో నవీకరణ ఇప్పటికే జరుగుతోంది లేదా దాని విడుదల కోసం వేచి ఉంది. దాని ఇన్‌స్టాలర్ ఏదైనా ఇన్‌స్టాల్ చేసే ముందు మిమ్మల్ని అడుగుతుంది.
 	Open the workflow page	వర్క్‌ఫ్లో పేజీని తెరవండి
 	none	ఏదీ లేదు
 	Declared conformance: {shown}	ప్రకటించిన అనుగుణ్యత: {shown}

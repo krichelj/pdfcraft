@@ -751,6 +751,7 @@
 	Starting the merge…	Birleştirme başlatılıyor…
 	Couldn't start the merge: {e}	Birleştirme başlatılamadı: {e}
 	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} fork'unuza birleştiriliyor. Fork'un sürümü çıktığında PdfCraft güncellemeyi sunar; çalışmaya devam edebilirsiniz.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Başka bir güncelleme zaten sürüyor ya da sürümünü bekliyor. Yükleyicisi herhangi bir şey yüklemeden önce size soracak.
 	Open the workflow page	İş akışı sayfasını aç
 	none	yok
 	Declared conformance: {shown}	Bildirilen uyumluluk: {shown}

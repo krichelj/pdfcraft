@@ -59,25 +59,36 @@ stub ditto 'if [ "$1" = -x ]; then mkdir -p "$4"; unzip -q "$3" -d "$4"; else
 stub codesign 'echo "codesign $*" >>"$STUB_LOG"; exit "${STUB_CODESIGN_RC:-0}"'
 # pgrep -xq PdfCraft: "running" while the file STUB_RUNNING exists.
 stub pgrep '[ -e "${STUB_RUNNING:-/nonexistent}" ]'
-# osascript: records its arguments; a dialog answers STUB_DIALOG; "quit" ends the running app.
+# osascript: records its arguments; a dialog answers STUB_DIALOG; "quit" ends the running app,
+# after STUB_QUIT_DELAY seconds (a user answering unsaved-changes prompts), or never when "never".
 stub osascript 'echo "osascript $*" >>"$STUB_LOG"
 case "$*" in
   *"display dialog"*) printf "%s\n" "${STUB_DIALOG:-}" ;;
-  *"to quit"*) rm -f "${STUB_RUNNING:-/nonexistent}" ;;
+  *"to quit"*)
+    case "${STUB_QUIT_DELAY:-0}" in
+      never) ;;
+      0) rm -f "${STUB_RUNNING:-/nonexistent}" ;;
+      *) (sleep "$STUB_QUIT_DELAY"; rm -f "${STUB_RUNNING:-/nonexistent}") >/dev/null 2>&1 & ;;
+    esac ;;
 esac'
 for t in xattr open; do stub "$t" "echo \"$t \$*\" >>\"\$STUB_LOG\""; done
+# plutil -extract PdfCraftVersion raw -o - <Info.plist>: the key's value, as mkapp writes it.
+stub plutil 'f="${!#}"; [ -f "$f" ] || exit 1
+sed -n "s:.*<key>PdfCraftVersion</key><string>\(.*\)</string>.*:\1:p" "$f" | grep . || exit 1'
 
-# A release v0.8.0-p1 whose app prints "new".
+# Usage: mkapp <dir> <what it prints> [<its version>]: a PdfCraft.app with an Info.plist.
 mkapp() {
   mkdir -p "$1/PdfCraft.app/Contents/MacOS"
   printf '#!/bin/sh\necho %s\n' "$2" >"$1/PdfCraft.app/Contents/MacOS/PdfCraft"
   chmod +x "$1/PdfCraft.app/Contents/MacOS/PdfCraft"
+  printf '<plist><dict><key>PdfCraftVersion</key><string>%s</string></dict></plist>\n' "${3:-0.0.1}" \
+    >"$1/PdfCraft.app/Contents/Info.plist"
 }
 # Usage: release <version> <what its app prints>: publish the fork's release on the stand-in GitHub.
 release() {
   local rel="$SERVE/krichelj/pdfcraft/releases/download/v$1"
   rm -rf "$T/build-$1"
-  mkapp "$T/build-$1" "$2"
+  mkapp "$T/build-$1" "$2" "$1"
   mkdir -p "$rel"
   (cd "$T/build-$1" && zip -qry "$rel/pdfcraft-$1-macos-aarch64.zip" PdfCraft.app)
   (cd "$rel" && sha256sum -- * >SHA256SUMS.txt)
@@ -203,14 +214,14 @@ check "  from the fork's releases only" bash -c "! grep -q 'storytold' '$T/log'"
 AWAIT=(PDFCRAFT_AWAIT_BASE=0.12.0 PDFCRAFT_AWAIT_POLL=0 PDFCRAFT_AWAIT_SECS=20)
 fresh
 check "waits until the fork's release is built on the merged version" run await ok "$T/apps" "${AWAIT[@]}" \
-  STUB_LATEST_SEQ="v0.11.0-p2 v0.11.0-p3 v0.12.0-p1"
+  STUB_LATEST_SEQ="v0.11.0-p2 v0.11.0-p3 v0.12.0-p1" STUB_DIALOG="button returned:Install now, gave up:false"
 check "  looking three times" looks 3
 check "  then installs it" app_says "$T/apps" merged
 check "  checked like any release" grep -q '^codesign --verify --strict' "$T/log"
 
 fresh
 check "compares versions as numbers (0.9.9 and 0.10.0 are older than 0.12.0)" run await-numeric ok "$T/apps" \
-  "${AWAIT[@]}" STUB_LATEST_SEQ="v0.9.9-p1 v0.10.0-p4 v0.12.0-p1"
+  "${AWAIT[@]}" STUB_LATEST_SEQ="v0.9.9-p1 v0.10.0-p4 v0.12.0-p1" STUB_DIALOG="button returned:Install now, gave up:false"
 check "  installs only the release built on 0.12.0" app_says "$T/apps" merged
 check "  after three looks" looks 3
 
@@ -220,7 +231,7 @@ check "gives up when the release never appears" run await-timeout refuse "$T/app
 check "  keeps the old copy" app_says "$T/apps" old
 check "  says why in an alert" grep -q '^osascript .*display alert' "$T/log"
 check "  downloading nothing" bash -c "! grep -q 'releases/download' '$T/log'"
-check "  and leaves no lock behind" bash -c "! ls '$TMPDIR' | grep -q pdfcraft-await"
+check "  and leaves no lock behind" bash -c "! ls -A '$TMPDIR' | grep -q pdfcraft-installer"
 
 for bad in 0.12 abc "0.12.0; rm -rf /" 0.012.0 1.2.3.4 "" ; do
   [ -n "$bad" ] || continue
@@ -254,21 +265,88 @@ check "an unanswered question (gave up) counts as Later" run await-gaveup ok "$T
 check "  the old copy stays" app_says "$T/apps" old
 rm -f "$T/running"
 
+LOCK="$TMPDIR/pdfcraft-installer.lock"
 fresh
 sleep 30 &
 waiting=$!
-mkdir -p "$TMPDIR/pdfcraft-await-$(id -u).lock"
-echo "$waiting" >"$TMPDIR/pdfcraft-await-$(id -u).lock/pid"
+ln -sfn "$waiting" "$LOCK"
 check "a second Merge and update while one waits does nothing" run await-twice ok "$T/apps" "${AWAIT[@]}" \
   STUB_LATEST_SEQ="v0.12.0-p1"
 check "  asking GitHub nothing" bash -c "! grep -q '^curl' '$T/log'"
 check "  and keeping the old copy" app_says "$T/apps" old
-check "  and the other installer's lock" test -f "$TMPDIR/pdfcraft-await-$(id -u).lock/pid"
+check "  and the other installer's lock" test "$(readlink "$LOCK")" = "$waiting"
+check "the one-line install refuses while another installer runs" run plain-locked refuse "$T/apps"
+check "  keeping the old copy" app_says "$T/apps" old
+check "  and the other installer's lock" test "$(readlink "$LOCK")" = "$waiting"
 kill "$waiting" 2>/dev/null || true
 wait "$waiting" 2>/dev/null || true
 check "a lock left by an installer that died is taken over" run await-stale ok "$T/apps" "${AWAIT[@]}" \
-  STUB_LATEST_SEQ="v0.12.0-p1"
+  STUB_LATEST_SEQ="v0.12.0-p1" STUB_DIALOG="button returned:Install now, gave up:false"
 check "  and the release installed" app_says "$T/apps" merged
+check "  and its lock released" test ! -e "$LOCK"
+
+# Merge and update always asks, also when PdfCraft isn't running (hours may have passed).
+fresh
+check "asks even when PdfCraft isn't running, and Later installs nothing" run await-closed-later ok "$T/apps" \
+  "${AWAIT[@]}" STUB_LATEST_SEQ="v0.12.0-p1" STUB_DIALOG="button returned:Later" PDFCRAFT_NO_OPEN=0
+check "  the question was asked" grep -q '^osascript .*display dialog' "$T/log"
+check "  the old copy stays" app_says "$T/apps" old
+check "  and nothing was opened" bash -c "! grep -q '^open' '$T/log'"
+fresh
+check "  Install now installs it and opens it" run await-closed-now ok "$T/apps" "${AWAIT[@]}" \
+  STUB_LATEST_SEQ="v0.12.0-p1" STUB_DIALOG="button returned:Install now, gave up:false" PDFCRAFT_NO_OPEN=0
+check "  the merged release is in place" app_says "$T/apps" merged
+check "  and opened" grep -q "^open $T/apps/PdfCraft.app\$" "$T/log"
+
+# Install and relaunch while Merge and update's installer holds the lock: it waits its turn.
+fresh
+sleep 3 &
+holder=$!
+ln -sfn "$holder" "$LOCK"
+check "Install and relaunch waits for the installer holding the lock" run relaunch-waits ok "$T/apps" \
+  PDFCRAFT_WAIT_PID=999999999 PDFCRAFT_WAIT_SECS=20
+check "  then installs" app_says "$T/apps" new
+wait "$holder" 2>/dev/null || true
+fresh
+sleep 30 &
+holder=$!
+ln -sfn "$holder" "$LOCK"
+check "  and gives up when it never finishes" run relaunch-locked refuse "$T/apps" PDFCRAFT_WAIT_PID=999999999 \
+  PDFCRAFT_WAIT_SECS=1 PDFCRAFT_NO_OPEN=0
+check "  keeping the old copy" app_says "$T/apps" old
+check "  saying why" grep -q '^osascript .*display alert' "$T/log"
+check "  and reopening it" grep -q "^open $T/apps/PdfCraft.app\$" "$T/log"
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+rm -f "$LOCK"
+
+# A release another installer already put in place is not installed twice.
+rm -rf "$T/apps" && mkdir -p "$T/apps" && mkapp "$T/apps" current "$V"
+check "the installed release is not installed again" run already ok "$T/apps" PDFCRAFT_WAIT_PID=999999999 PDFCRAFT_NO_OPEN=0
+check "  nothing is copied" app_says "$T/apps" current
+check "  and PdfCraft is reopened" grep -q "^open $T/apps/PdfCraft.app\$" "$T/log"
+rm -rf "$T/apps" && mkdir -p "$T/apps" && mkapp "$T/apps" current 0.12.0-p1
+check "Merge and update doesn't ask about a release already installed" run await-already ok "$T/apps" \
+  "${AWAIT[@]}" STUB_LATEST_SEQ="v0.12.0-p1" STUB_DIALOG="button returned:Install now, gave up:false"
+check "  asking nothing" bash -c "! grep -q 'display dialog' '$T/log'"
+check "  and copying nothing" app_says "$T/apps" current
+
+# Install now gives PdfCraft as long as Install and relaunch does to quit, not a fixed minute.
+fresh
+touch "$T/running"
+check "Install now waits for a slow quit (a Save panel)" run await-slow-quit ok "$T/apps" "${AWAIT[@]}" \
+  STUB_LATEST_SEQ="v0.12.0-p1" STUB_RUNNING="$T/running" STUB_DIALOG="button returned:Install now, gave up:false" \
+  STUB_QUIT_DELAY=3 PDFCRAFT_WAIT_SECS=30
+check "  then installs" app_says "$T/apps" merged
+fresh
+touch "$T/running"
+started=$SECONDS
+check "  and gives up after PDFCRAFT_WAIT_SECS when it never quits" run await-never-quits refuse "$T/apps" \
+  "${AWAIT[@]}" STUB_LATEST_SEQ="v0.12.0-p1" STUB_RUNNING="$T/running" \
+  STUB_DIALOG="button returned:Install now, gave up:false" STUB_QUIT_DELAY=never PDFCRAFT_WAIT_SECS=2
+check "  within seconds, not a minute" test $((SECONDS - started)) -lt 30
+check "  keeping the old copy" app_says "$T/apps" old
+rm -f "$T/running"
 
 fresh
 check "refuses PDFCRAFT_AWAIT_BASE together with PDFCRAFT_WAIT_PID" run await-pid refuse "$T/apps" \

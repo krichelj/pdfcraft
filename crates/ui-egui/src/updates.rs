@@ -68,7 +68,8 @@ impl Latest {
         let fork_update = self.fork.as_ref().filter(|f| is_newer(&f.version, current));
         let fork_has = fork_update.map_or(current, |f| f.version.as_str());
         match (&self.upstream, fork_update) {
-            (Some(up), _) if is_newer(&up.version, fork_has) => Offer::Merge(up.clone()),
+            // Only a full MAJOR.MINOR.PATCH tag: the waiting installer can't wait for a `v0.12`.
+            (Some(up), _) if full_version(&up.version) && is_newer(&up.version, fork_has) => Offer::Merge(up.clone()),
             (_, Some(fork)) => Offer::Install(fork.clone()),
             _ => Offer::UpToDate,
         }
@@ -94,6 +95,10 @@ pub enum Install {
 /// right away, asking about unsaved work.
 pub type UpdateInstaller = Arc<dyn Fn(&Install) -> Result<(), String> + Send + Sync>;
 
+/// Whether an installer is already running: Install and relaunch, or Merge and update's installer
+/// waiting for its release. Asked when a check finishes; the dialog then offers no second one.
+pub type InstallerBusy = Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// Starts the fork's Sync upstream workflow (blocking; it runs on its own thread). Its error says
 /// why it couldn't (no GitHub CLI, not signed in, no network).
 pub type SyncTrigger = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
@@ -104,6 +109,12 @@ pub type SyncTrigger = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 /// newer.
 pub fn is_newer(latest: &str, current: &str) -> bool {
     matches!((parse(latest), parse(current)), (Some(l), Some(c)) if l > c)
+}
+
+/// Whether `tag` names a full `MAJOR.MINOR.PATCH` version (`v0.12.0`, `0.12.0-p1`), not `v0.12`.
+fn full_version(tag: &str) -> bool {
+    let core = tag.trim().trim_start_matches(['v', 'V']).split(['+', '-']).next().unwrap_or_default();
+    parse(tag).is_some() && core.split('.').count() == 3
 }
 
 fn parse(v: &str) -> Option<(u64, u64, u64, u64)> {
@@ -156,6 +167,8 @@ pub(crate) struct Updates {
     pub(crate) quiet: bool,
     /// Why the last start of the installer failed.
     pub(crate) install_error: Option<String>,
+    /// An installer is running (asked when the check finished, or started from here since).
+    pub(crate) busy: bool,
 }
 
 impl PdfCraftApp {
@@ -221,6 +234,7 @@ impl PdfCraftApp {
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("the update check stopped unexpectedly".into())),
                 };
                 if let Some(result) = result {
+                    self.updates.busy = self.installer_busy.as_ref().is_some_and(|busy| busy());
                     let offers = result.as_ref().is_ok_and(|l| l.offer(env!("CARGO_PKG_VERSION")) != Offer::UpToDate);
                     if std::mem::take(&mut self.updates.quiet) && offers {
                         self.updates.open = true;
@@ -247,6 +261,7 @@ impl PdfCraftApp {
         let Some(install) = self.update_installer.clone() else { return };
         match install(&Install::Release(version.to_string())) {
             Ok(()) => {
+                self.updates.busy = true;
                 self.updates.open = false;
                 self.updates.install_error = None;
                 if let Some(ctx) = &self.ctx {
@@ -287,10 +302,11 @@ impl PdfCraftApp {
     /// The workflow was asked for (or couldn't be): start the waiting installer either way, since
     /// the daily sync produces the same release when nobody starts it by hand.
     fn merge_started(&mut self, upstream: String, trigger_error: Option<String>) {
-        if let Some(install) = self.update_installer.clone()
-            && let Err(e) = install(&Install::AfterMerge(upstream.clone()))
-        {
-            self.updates.install_error = Some(e);
+        if let Some(install) = self.update_installer.clone() {
+            match install(&Install::AfterMerge(upstream.clone())) {
+                Ok(()) => self.updates.busy = true,
+                Err(e) => self.updates.install_error = Some(e),
+            }
         }
         self.updates.merge = Merge::Started { upstream, trigger_error };
     }
@@ -336,6 +352,18 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 });
             }
             Check::Done(Ok(latest)) => match latest.offer(current) {
+                Offer::Install(r) if app.updates.busy && can_install => {
+                    // One installer at a time: the running one asks before it installs anything.
+                    let version = r.version.trim_start_matches(['v', 'V']);
+                    ui.label(egui::RichText::new(crate::i18n::fmt(tl!("PdfCraft {v} is available."), &[("v", version)])).strong());
+                    ui.label(
+                        egui::RichText::new(tl!(
+                            "Another update is already in progress or waiting for its release. Its installer asks you before it installs anything."
+                        ))
+                        .color(t.text_muted),
+                    );
+                    download = Some(r.url.clone());
+                }
                 Offer::Install(r) => {
                     let version = r.version.trim_start_matches(['v', 'V']);
                     ui.label(egui::RichText::new(crate::i18n::fmt(tl!("PdfCraft {v} is available."), &[("v", version)])).strong());
@@ -512,6 +540,10 @@ mod tests {
     #[test]
     fn a_tag_that_is_not_a_version_offers_nothing() {
         assert_eq!(latest(Some("v0.11.0-p2"), Some("nightly")).offer("0.11.0-p2"), Offer::UpToDate);
+        // Not MAJOR.MINOR.PATCH: the waiting installer couldn't wait for it, so no merge is offered.
+        for short in ["v0.12", "v1", "v0.12.0.1", "v0..1"] {
+            assert_eq!(latest(Some("v0.11.0-p2"), Some(short)).offer("0.11.0-p2"), Offer::UpToDate, "{short}");
+        }
         assert_eq!(latest(Some("latest"), Some("nightly")).offer("0.11.0-p2"), Offer::UpToDate);
         assert_eq!(latest(None, None).offer("0.11.0-p2"), Offer::UpToDate);
     }
