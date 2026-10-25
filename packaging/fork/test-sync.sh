@@ -276,6 +276,16 @@ code_change() {
 }
 code_change code
 sync code "" SYNC_NO_LLM=1
+# The same conflict for real (no dry run): the sync stops before any push and opens an issue; with
+# an issue already open for that branch (a stand-in gh lists #5), it comments there instead.
+code_change codeissue
+sync codeissue "" SYNC_NO_LLM=1 SYNC_DRY_RUN=
+code_change codeissue2
+mkdir -p "$T/ghissue"
+# shellcheck disable=SC2016 # the stand-in's own $1 $2 $*, written as they are
+printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/ghissue/calls"\ncase "$1 $2" in "issue list") echo 5 ;; esac\n' "$T" >"$T/ghissue/gh"
+chmod +x "$T/ghissue/gh"
+sync codeissue2 "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghissue:$PATH"
 code_change llm
 sync llm
 code_change llmdown
@@ -376,6 +386,12 @@ check "  checked by cargo deny" said deny "cargo deny passes"
 check "a code conflict without the LLM (SYNC_NO_LLM=1) stops the sync" stopped code "conflicts that need a person"
 check "  naming the file" said code "crates/ui-egui/src/updates.rs"
 check "  without asking the LLM anything" bash -c "! test -s '$T/s-code.llm'"
+check "  saying it would ask a person (a dry run opens no issue)" said code "dry run; would ask a person: upstream merge conflicts"
+check "  for real: an issue for the owner" grep -q "issue create --repo krichelj/pdfcraft --title sync/upstream-$(git -C "$T/up-codeissue" rev-parse --short=12 HEAD): upstream merge conflicts" "$T/ghnone/calls"
+# shellcheck disable=SC2016 # literal backticks, the issue body's Markdown
+check "  naming the conflicted file" grep -q '^- `crates/ui-egui/src/updates.rs`$' "$T/ghnone/calls"
+check "  before anything is pushed" bash -c "! grep -q 'git-credential\\|stopping before the push' '$T/s-codeissue.out' && ! git -C '$T/fork' rev-parse -q --verify 'sync/upstream-$(git -C "$T/up-codeissue" rev-parse --short=12 HEAD)' >/dev/null"
+check "  and once per sync branch: an open issue gets a comment" grep -q "^gh issue comment 5 " "$T/ghissue/calls"
 check "a code conflict is resolved by the on-call LLM and merged" ok llm
 check "  which got the conflicted repo and the fork's merge rules" \
   grep -q "^oncall-llm resolve --repo $T/s-llm --instructions $T/s-llm/packaging/fork/oncall-instructions.md" "$T/s-llm.llm"
@@ -508,6 +524,8 @@ case "$1 $2" in
     [ -z "${GH_MERGE_FAILS:-}" ] || exit 1
     echo "merged $3" >>"$GH_LOG" ;;
   "run list") echo 4242 ;;
+  "issue list") ;;
+  "issue "*) echo "$*" >>"$GH_LOG" ;;
   "run view")
     if [ -n "${GH_BIGLOG:-}" ]; then
       # As `gh run view --log-failed` prints a failed Test step: job, step and time on every line,
@@ -601,6 +619,8 @@ check "  red after every fix: two attempts, then left open" bash -c "$(declare -
   ! run_fixing '$red' && [ \"\$(fixes)\" = 2 ] && ! grep -q merged '$T/ghlog'"
 check "  without the LLM: left open at once" bash -c "$(declare -f run_fixing fixes); T='$T' SRC='$SRC'
   ! SYNC_NO_LLM=1 run_fixing '$red' && [ \"\$(fixes)\" = 0 ] && ! grep -q merged '$T/ghlog'"
+check "  and an issue tells the owner" bash -c "$(declare -f run_fixing fixes); T='$T' SRC='$SRC'
+  ! SYNC_NO_LLM=1 run_fixing '$red'; grep -q '^issue create --repo x/y --title sync/x: PR #7 has failing checks' '$T/ghlog'"
 check "  a CI fix touching a protected path is never pushed" bash -c "$(declare -f run_fixing fixes); T='$T' SRC='$SRC'
   ! STUB_LLM=protected run_fixing '$red' && [ \"\$(fixes)\" = 1 ] && ! grep -q '^pushed' '$T/ghlog' && ! grep -q merged '$T/ghlog'"
 check "  the LLM reads a digest of a 900 KB-class failed log, not the log" bash -c "$(declare -f run_fixing fixes); T='$T' SRC='$SRC'
