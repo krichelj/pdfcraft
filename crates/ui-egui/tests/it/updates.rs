@@ -326,7 +326,7 @@ fn a_newer_original_pdfcraft_is_merged_into_the_fork_never_installed() {
     assert!(!closing(&h), "the app keeps running while the fork's release is made");
     assert!(h.query_by_label("Merge and update").is_none(), "not offered twice");
     assert!(h.query_by_label_contains("Nothing is").is_none(), "no note about what happens before choosing");
-    h.query_all_by_label("Close")[0].click();
+    h.query_all_by_label("Close").next().unwrap().click();
     h.run_steps(2);
     assert!(h.query_by_label_contains("The original PdfCraft").is_none());
 }
