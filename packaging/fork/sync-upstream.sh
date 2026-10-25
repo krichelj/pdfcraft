@@ -120,6 +120,16 @@ if [ -z "$pr" ]; then
     llm_available || die "the merged assets don't check out (cargo xtask assets above)"
     echo "sync: the merged assets don't check out yet; the on-call LLM's fix loop runs that check"
   fi
+  # Cargo.lock as cargo writes it for the merged manifests: upstream's lock, taken on a conflict,
+  # lacks the fork's own dependencies, and the first build rewrites it. Committed here, so the fix
+  # loop starts from a clean tree (it refuses to commit over uncommitted tracked work).
+  cargo metadata --format-version 1 >/dev/null 2>&1 || true
+  if ! git diff --quiet Cargo.lock; then
+    git add Cargo.lock
+    git commit --quiet -m "Fork: Cargo.lock as cargo writes it for the merged manifests
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+  fi
   if ! git diff --quiet ATTRIBUTION.toml; then
     git add ATTRIBUTION.toml
     git commit --quiet -m "Fork: record the merged translation catalogs' hashes
