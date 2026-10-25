@@ -403,8 +403,16 @@ mkdir -p "$T/gh"
 cat >"$T/gh/gh" <<'EOF'
 #!/usr/bin/env bash
 case "$1 $2" in
-  "pr view") echo deadbeef ;;
-  "pr merge") echo "merged $3" >>"$GH_LOG" ;;
+  "pr view")
+    case " $* " in
+      *" state "*) echo "${GH_PR_STATE:-OPEN}" ;;
+      *) echo deadbeef ;;
+    esac ;;
+  "pr merge")
+    echo "merge args: $*" >>"$GH_LOG"
+    # GH_MERGE_FAILS: as when another run merged it first, or a push moved the head.
+    [ -z "${GH_MERGE_FAILS:-}" ] || exit 1
+    echo "merged $3" >>"$GH_LOG" ;;
   "run list") echo 4242 ;;
   "run view")
     if [ -n "${GH_BIGLOG:-}" ]; then
@@ -447,6 +455,27 @@ check "merge: green without CI's test job never merges" bash -c "$(declare -f ru
 self_pending='{"check_runs":[{"name":"test (shared code)","status":"completed","conclusion":"success"},{"name":"merge when green","status":"in_progress","conclusion":null}]}'
 check "auto-merge: its own running check doesn't block the merge" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; MERGE_IGNORE_CHECK='merge when green' run_merge '$self_pending' && grep -q 'merged 7' '$T/ghlog'"
 check "  but without that exemption it never counts as green" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; ! MW_TIMEOUT=2 run_merge '$self_pending' && ! grep -q merged '$T/ghlog'"
+
+check "merge: only the commit whose checks passed is merged" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; run_merge '$green' && grep -q 'match-head-commit deadbeef' '$T/ghlog'"
+check "merge: a PR another run merged first counts as merged" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; GH_MERGE_FAILS=1 GH_PR_STATE=MERGED run_merge '$green'"
+check "merge: a merge refused on an open PR (a newer push) fails" bash -c "$(declare -f run_merge); T='$T' SRC='$SRC'; ! GH_MERGE_FAILS=1 GH_PR_STATE=OPEN run_merge '$green'"
+
+# auto-merge.sh as the workflow runs it. A run for a finished check never waits and never fails for
+# one (it used to cancel the PR's own run, leaving every merged PR with a red check).
+run_auto() {
+  printf '%s\n' "${@:2}" >"$T/states"
+  echo 0 >"$T/step"
+  : >"$T/ghlog"
+  # shellcheck disable=SC2030,SC2031 # each run sets its environment in its own subshell, on purpose
+  (export PATH="$T/gh:$PATH" GH_LOG="$T/ghlog" GH_STEP="$T/step" GH_STATES="$T/states" AUTO_MERGE_EVENT="$1"
+    # A wait would sleep 30 s a poll: 20 s is time for the decision and none for a wait.
+    timeout 20 bash "$SRC/packaging/fork/auto-merge.sh" 7) >"$T/autolog" 2>&1
+}
+check "auto-merge: a PR merged already is left alone, without failing" bash -c "$(declare -f run_auto); T='$T' SRC='$SRC'; GH_PR_STATE=MERGED run_auto pull_request '$green' && ! grep -q 'merge args' '$T/ghlog'"
+check "auto-merge: after a check finishes, a green PR is merged" bash -c "$(declare -f run_auto); T='$T' SRC='$SRC'; run_auto workflow_run '$self_pending' && grep -q 'merged 7' '$T/ghlog'"
+check "  a pending PR is left to its own run, without waiting or failing" bash -c "$(declare -f run_auto); T='$T' SRC='$SRC'; run_auto workflow_run '$pending' && ! grep -q 'merge args' '$T/ghlog'"
+check "  a failing PR too: its own run reports the failure" bash -c "$(declare -f run_auto); T='$T' SRC='$SRC'; run_auto workflow_run '$red' && ! grep -q 'merge args' '$T/ghlog'"
+check "auto-merge: the PR's own run fails on a failing check" bash -c "$(declare -f run_auto); T='$T' SRC='$SRC'; ! run_auto pull_request '$red' && ! grep -q 'merge args' '$T/ghlog'"
 
 # 10. merge_when_green_or_fix: a failing check goes to the LLM with the failed job's log, its fix is
 #     pushed and the new head's checks awaited, at most SYNC_CI_FIX_RETRIES (2) times.

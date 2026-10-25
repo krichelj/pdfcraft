@@ -18,10 +18,12 @@ push_as_owner() {
 # it waits).
 # Usage: wait_for_checks <pr> <timeout seconds>. Wait for every check on the PR's head: returns 0
 # when they all passed, 1 when one failed, 2 when they didn't finish in time. CI's test job must be
-# among them, so a PR whose checks haven't started yet is never "green".
+# among them, so a PR whose checks haven't started yet is never "green". CHECKED_HEAD is set to the
+# commit whose checks were read, the only one merge_pr will merge.
 wait_for_checks() {
   local pr="$1" timeout="$2" head state deadline
   head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)
+  CHECKED_HEAD="$head"
   deadline=$(($(date +%s) + timeout))
   while :; do
     # shellcheck disable=SC2016 # a jq program, not shell
@@ -40,13 +42,21 @@ wait_for_checks() {
   done
 }
 
+# Usage: merge_pr <pr>. Merge it, deleting its branch, but only at CHECKED_HEAD (the commit whose
+# checks passed: a push after them is never merged untested). A PR another run merged first counts as
+# merged, so two runs that both saw it green never turn the second one red.
+merge_pr() {
+  gh pr merge "$1" --repo "$REPO" --merge --delete-branch ${CHECKED_HEAD:+--match-head-commit "$CHECKED_HEAD"} && return 0
+  [ "$(gh pr view "$1" --repo "$REPO" --json state --jq .state)" = MERGED ]
+}
+
 # Usage: merge_when_green <pr> <timeout seconds>. Wait for every check on the PR's head, then merge it
 # (the branch is deleted); a failing check leaves it open.
 merge_when_green() {
   local pr="$1" rc=0
   wait_for_checks "$pr" "$2" || rc=$?
   case "$rc" in
-    0) gh pr merge "$pr" --repo "$REPO" --merge --delete-branch ;;
+    0) merge_pr "$pr" ;;
     1) die "PR #$pr has failing checks; left open for a person" ;;
     *) die "PR #$pr's checks didn't finish in time; left open" ;;
   esac
@@ -200,7 +210,7 @@ merge_when_green_or_fix() {
     wait_for_checks "$pr" "$timeout" || rc=$?
     case "$rc" in
       0)
-        gh pr merge "$pr" --repo "$REPO" --merge --delete-branch
+        merge_pr "$pr"
         return
         ;;
       2) die "PR #$pr's checks didn't finish in time; left open" ;;
