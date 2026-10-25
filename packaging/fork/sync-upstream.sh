@@ -171,7 +171,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   fixes=$(git log --first-parent --format=%s sync-base..HEAD | grep '^Sync fix' || true)
 
   base_now="${current%%-*}"
-  base_up=$(git show "$UPSTREAM_REF:Cargo.toml" | sed -n 's/^version = "\([^"]*\)".*/\1/p' | head -1)
+  base_up=$(git show "$UPSTREAM_REF:Cargo.toml" | sed -n '/^version = "/{s/^version = "\([^"]*\)".*/\1/p;q;}')
   base_up="${base_up%%-*}"
   if [ "$base_up" = "$base_now" ]; then
     level="${current##*-p}"
@@ -189,7 +189,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   summary="$(mktemp)"
   {
     echo "- Brings in $count upstream storytold/pdfcraft commits, up to [\`${up:0:12}\`](https://github.com/storytold/pdfcraft/commit/$up):"
-    git log --no-merges --format='%s' "$UPSTREAM_REF" --not sync-base | head -40 | sed -e 's/^/  - /' -e 's/TODO/to-do/g'
+    # -n, not `| head`: under pipefail, head leaving early kills git log with SIGPIPE (exit 141).
+    git log --no-merges -n 40 --format='%s' "$UPSTREAM_REF" --not sync-base | sed -e 's/^/  - /' -e 's/TODO/to-do/g'
     if [ "$count" -gt 40 ]; then echo "  - and $((count - 40)) more"; fi
     if [ -n "$kept" ]; then echo "- Keeps the fork's own workflows; upstream's changes to$kept were not taken."; fi
     if [ -n "$llm_resolved" ]; then
