@@ -215,6 +215,19 @@ git -C "$T/fork" branch -f "sync/upstream-$(git -C "$T/up-stalepr" rev-parse --s
 git -C "$T/fork" branch -f "sync/upstream-$(git -C "$T/up-currentpr" rev-parse --short=12 HEAD)" HEAD
 sync stalepr "" PATH="$T/ghpr:$PATH"
 sync currentpr "" PATH="$T/ghpr:$PATH"
+# The rebuild for real (no dry run): the branch is replaced on its origin and the PR's title and
+# record updated, through the REST API (`gh pr edit` fails on GitHub's retired classic projects).
+# The stand-in gh reports no checks, so the sync then stops waiting for them.
+upstream rebuilt
+echo "upstream note" >>"$T/up-rebuilt/NOTICE"
+up rebuilt commit -qam "upstream: an ordinary change"
+rebuilt_branch="sync/upstream-$(git -C "$T/up-rebuilt" rev-parse --short=12 HEAD)"
+git -C "$T/fork" branch -f "$rebuilt_branch" HEAD~1
+mkdir -p "$T/ghrb"
+# shellcheck disable=SC2016 # the stand-in's own $1 $2 $*, written as they are
+printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/ghrb/calls"\ncase "$1 $2" in\n  "pr list") echo 77 ;;\n  "pr edit") echo "GraphQL: Projects (classic) is being deprecated" >&2; exit 1 ;;\nesac\n' "$T" >"$T/ghrb/gh"
+chmod +x "$T/ghrb/gh"
+sync rebuilt "" PATH="$T/ghrb:$PATH" SYNC_DRY_RUN= SYNC_CHECKS_TIMEOUT=1
 
 # 3. Upstream adds a workflow for another platform or GitHub's runners.
 upstream wf
@@ -332,6 +345,10 @@ check "an open sync PR behind main is rebuilt from today's main" said stalepr "P
 check "  through the merge to its dry-run stop" said stalepr "dry run; stopping before the push"
 check "an open sync PR on today's main: a dry run stops there" said currentpr "dry run; PR #77 is open on the current main"
 check "  without asking the LLM or touching the PR" bash -c "[ ! -s '$T/s-currentpr.llm' ] && [ ! -s '$T/ghpr/calls' ]"
+check "a rebuilt sync PR's branch is replaced on its origin" bash -c \
+  "git -C '$T/fork' merge-base --is-ancestor \"\$(git -C '$T/fork' rev-parse HEAD)\" '$rebuilt_branch' && git -C '$T/fork' log -1 --format=%s '$rebuilt_branch' | grep -q '^Release: PdfCraft'"
+check "  and the PR's title and record updated through the REST API" grep -q "api -X PATCH repos/krichelj/pdfcraft/pulls/77 -f title=Sync upstream" "$T/ghrb/calls"
+check "  then the sync waits for the PR's checks" said rebuilt "checks didn't finish in time"
 check "a long upstream history is merged" ok many
 check "  its record lists the newest 40 commits and counts the rest" bash -c \
   "grep -q 'upstream: change 1461,' '$T/s-many/docs/fork/releases/v$next.md' && grep -q 'and 1460 more' '$T/s-many/docs/fork/releases/v$next.md' && ! grep -q 'upstream: change 1460,' '$T/s-many/docs/fork/releases/v$next.md'"
