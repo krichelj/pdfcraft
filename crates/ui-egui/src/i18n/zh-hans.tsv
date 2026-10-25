@@ -467,6 +467,15 @@
 	Couldn't start the update: {e}	无法开始更新：{e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	你的版本是 {c}。“安装并重新启动”会下载新版本、进行校验，然后重新打开 PdfCraft。
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	向 GitHub 查询最新版本。在你选择“安装并重新启动”之前，不会下载或安装任何内容。
+	The original PdfCraft {v} is available.	原版 PdfCraft {v} 可用。
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	你的版本是 {c}。“合并并更新”会在你的构建机器上将它合并到你的分支（fork）并运行测试；随后会发布该分支的新版本。
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	向 GitHub 查询最新版本。在你选择“合并并更新”之前，不会合并或安装任何内容。
+	Merge and update	合并并更新
+	Starting the merge…	正在开始合并…
+	Couldn't start the merge: {e}	无法开始合并：{e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	正在将 PdfCraft {v} 合并到你的分支。分支的新版本发布后，PdfCraft 会提示更新；你可以继续工作。
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	另一个更新已在进行中，或正在等待其发布。其安装程序会在安装任何内容之前询问您。
+	Open the workflow page	打开工作流页面
 	none	无
 	Declared conformance: {shown}	声明的一致性：{shown}
 	Output intent: {list}	输出意图：{list}

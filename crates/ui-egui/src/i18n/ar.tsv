@@ -788,6 +788,15 @@
 	Couldn't start the update: {e}	تعذّر بدء التحديث: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	لديك الإصدار {c}. يؤدي «تثبيت وإعادة التشغيل» إلى تنزيل الإصدار الجديد والتحقق منه ثم إعادة فتح PdfCraft.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	يسأل GitHub عن أحدث إصدار. لا يُنزَّل أو يُثبَّت أي شيء حتى تختار «تثبيت وإعادة التشغيل».
+	The original PdfCraft {v} is available.	PdfCraft الأصلي {v} متاح.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	لديك الإصدار {c}. يؤدي «الدمج والتحديث» إلى دمجه في نسختك المشتقة (fork) على أجهزة البناء لديك وتشغيل الاختبارات؛ ثم يصدر الإصدار الجديد من نسختك.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	يسأل GitHub عن أحدث الإصدارات. لا يُدمج أو يُثبَّت أي شيء حتى تختار «الدمج والتحديث».
+	Merge and update	الدمج والتحديث
+	Starting the merge…	جارٍ بدء الدمج…
+	Couldn't start the merge: {e}	تعذّر بدء الدمج: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	جارٍ دمج PdfCraft {v} في نسختك المشتقة. عند صدور إصدار نسختك، يعرض PdfCraft التحديث؛ يمكنك متابعة العمل.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	تحديث آخر قيد التنفيذ بالفعل أو ينتظر صدور إصداره. سيسألك مثبّته قبل أن يثبّت أي شيء.
+	Open the workflow page	فتح صفحة سير العمل
 	none	لا شيء
 	Declared conformance: {shown}	المطابقة المعلنة: {shown}
 	Output intent: {list}	هدف الإخراج: {list}

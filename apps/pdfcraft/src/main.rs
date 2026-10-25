@@ -393,8 +393,11 @@ fn app_creator<'a>(
             app.motion.source = Some(motion::source());
         }
         app.update_source = Some(std::sync::Arc::new(updates::latest_release));
-        // Install and relaunch, when this runs from an installed PdfCraft.app that carries the
-        // installer; otherwise the Updates dialog offers the release page.
+        // Merge and update starts the fork's Sync upstream workflow with the GitHub CLI.
+        app.sync_trigger = Some(std::sync::Arc::new(updates::trigger_sync));
+        // Install and relaunch (and Merge and update's waiting installer), when this runs from an
+        // installed PdfCraft.app that carries the installer; otherwise the Updates dialog offers
+        // the release page.
         let logs = pdfcraft_ui_egui::portable::data_dir()
             .map(std::path::Path::to_path_buf)
             .or_else(|| eframe::storage_dir("PdfCraft"))
@@ -402,7 +405,9 @@ fn app_creator<'a>(
         if let (Ok(exe), Some(logs)) = (std::env::current_exe(), logs)
             && let Some(installer) = updates::Installer::bundled(&exe, &logs)
         {
-            app.update_installer = Some(std::sync::Arc::new(move |tag: &str, from_fork: bool| installer.start(tag, from_fork)));
+            let busy = installer.clone();
+            app.installer_busy = Some(std::sync::Arc::new(move || busy.busy()));
+            app.update_installer = Some(std::sync::Arc::new(move |what: &pdfcraft_ui_egui::updates::Install| installer.start(what)));
         }
         // Once per launch, quietly: the Updates dialog opens only when a newer release exists.
         app.check_for_updates_quietly();

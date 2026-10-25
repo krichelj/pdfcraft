@@ -789,6 +789,15 @@
 	Couldn't start the update: {e}	アップデートを開始できませんでした: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	現在のバージョンは {c} です。「インストールして再起動」を選ぶと、新しいバージョンをダウンロードして確認し、PdfCraft を開き直します。
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	GitHub に最新リリースを問い合わせます。「インストールして再起動」を選ぶまで、何もダウンロードもインストールもされません。
+	The original PdfCraft {v} is available.	オリジナルの PdfCraft {v} が利用できます。
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	現在のバージョンは {c} です。「マージして更新」を選ぶと、ビルド用のマシンでそれをあなたのフォークにマージしてテストを実行します。その後、フォークの新しいリリースが公開されます。
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	GitHub に最新リリースを問い合わせます。「マージして更新」を選ぶまで、何もマージもインストールもされません。
+	Merge and update	マージして更新
+	Starting the merge…	マージを開始しています…
+	Couldn't start the merge: {e}	マージを開始できませんでした: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} をあなたのフォークにマージしています。フォークのリリースが公開されると、PdfCraft がアップデートを案内します。作業はそのまま続けられます。
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	別の更新がすでに進行中か、そのリリースを待っています。インストーラーは何かをインストールする前に確認します。
+	Open the workflow page	ワークフローのページを開く
 	none	なし
 	Declared conformance: {shown}	宣言された準拠規格: {shown}
 	Output intent: {list}	出力インテント: {list}

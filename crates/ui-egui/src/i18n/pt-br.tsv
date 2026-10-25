@@ -415,6 +415,15 @@
 	Couldn't start the update: {e}	Não foi possível iniciar a atualização: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Você tem a versão {c}. "Instalar e reiniciar" baixa a nova versão, verifica e abre o PdfCraft novamente.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Consulta o GitHub sobre a versão mais recente. Nada é baixado nem instalado até você escolher "Instalar e reiniciar".
+	The original PdfCraft {v} is available.	O PdfCraft original {v} está disponível.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Você tem a versão {c}. "Mesclar e atualizar" mescla essa versão ao seu fork nas suas máquinas de build e executa os testes; em seguida sai a nova versão do fork.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Consulta o GitHub sobre as versões mais recentes. Nada é mesclado nem instalado até você escolher "Mesclar e atualizar".
+	Merge and update	Mesclar e atualizar
+	Starting the merge…	Iniciando a mesclagem…
+	Couldn't start the merge: {e}	Não foi possível iniciar a mesclagem: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	Mesclando o PdfCraft {v} ao seu fork. Quando a versão do fork sair, o PdfCraft oferecerá a atualização; você pode continuar trabalhando.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Outra atualização já está em andamento ou aguardando sua versão. O instalador dela pergunta antes de instalar qualquer coisa.
+	Open the workflow page	Abrir a página do workflow
 	none	nenhum
 	Declared conformance: {shown}	Conformidade declarada: {shown}
 	Output intent: {list}	Intenção de saída: {list}

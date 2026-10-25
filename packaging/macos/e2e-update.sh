@@ -11,6 +11,9 @@
 # Usage: packaging/macos/e2e-update.sh <pdfcraft binary> <pdfcraft-cli binary>
 #   Build both with a version older than the latest release, e.g.
 #   cargo xtask version set 0.8.0 && cargo build -p pdfcraft -p pdfcraft-cli, then restore.
+#   The fork's latest release must be built on the original PdfCraft's latest (as the daily sync
+#   keeps it): while the original is ahead, the dialog offers Merge and update instead, which
+#   test-install.sh and the ui-egui updates tests cover with stand-ins.
 # Needs: xvfb-run, curl, unzip, sha256sum, rcodesign, file; network access to github.com.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -782,6 +782,15 @@
 	Couldn't start the update: {e}	Не удалось начать обновление: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	У вас версия {c}. «Установить и перезапустить» скачает новую версию, проверит её и снова откроет PdfCraft.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Запрашивает у GitHub последний выпуск. Ничего не скачивается и не устанавливается, пока вы не выберете «Установить и перезапустить».
+	The original PdfCraft {v} is available.	Доступна оригинальная PdfCraft {v}.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	У вас версия {c}. «Объединить и обновить» объединит её с вашим форком на ваших сборочных машинах и запустит тесты; затем выйдет новый выпуск форка.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Запрашивает у GitHub последние выпуски. Ничего не объединяется и не устанавливается, пока вы не выберете «Объединить и обновить».
+	Merge and update	Объединить и обновить
+	Starting the merge…	Запуск объединения…
+	Couldn't start the merge: {e}	Не удалось начать объединение: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} объединяется с вашим форком. Когда выйдет выпуск форка, PdfCraft предложит обновление; можно продолжать работу.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Другое обновление уже выполняется или ожидает своего выпуска. Его установщик спросит вас, прежде чем что-либо устанавливать.
+	Open the workflow page	Открыть страницу рабочего процесса
 	none	нет
 	Declared conformance: {shown}	Заявленное соответствие: {shown}
 	Output intent: {list}	Выходное намерение: {list}

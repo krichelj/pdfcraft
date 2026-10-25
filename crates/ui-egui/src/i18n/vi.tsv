@@ -684,6 +684,15 @@ theme	Appearance	Giao diện
 	Couldn't start the update: {e}	Không thể bắt đầu cập nhật: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Bạn đang dùng phiên bản {c}. "Cài đặt và khởi động lại" sẽ tải phiên bản mới, kiểm tra và mở lại PdfCraft.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	Hỏi GitHub về bản phát hành mới nhất. Không có gì được tải xuống hoặc cài đặt cho đến khi bạn chọn "Cài đặt và khởi động lại".
+	The original PdfCraft {v} is available.	PdfCraft gốc {v} đã có sẵn.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Bạn đang dùng phiên bản {c}. "Hợp nhất và cập nhật" sẽ hợp nhất phiên bản đó vào fork của bạn trên các máy build của bạn và chạy kiểm thử; sau đó bản phát hành mới của fork sẽ ra mắt.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	Hỏi GitHub về các bản phát hành mới nhất. Không có gì được hợp nhất hoặc cài đặt cho đến khi bạn chọn "Hợp nhất và cập nhật".
+	Merge and update	Hợp nhất và cập nhật
+	Starting the merge…	Đang bắt đầu hợp nhất…
+	Couldn't start the merge: {e}	Không thể bắt đầu hợp nhất: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	Đang hợp nhất PdfCraft {v} vào fork của bạn. Khi bản phát hành của fork ra mắt, PdfCraft sẽ đề xuất bản cập nhật; bạn có thể tiếp tục làm việc.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Một bản cập nhật khác đang diễn ra hoặc đang chờ bản phát hành của nó. Trình cài đặt sẽ hỏi bạn trước khi cài đặt bất cứ thứ gì.
+	Open the workflow page	Mở trang quy trình
 	Later in tab order	Muộn hơn theo thứ tự tab
 	Layers	Các lớp
 	Layers Panel and Page	Bảng Các lớp và trang

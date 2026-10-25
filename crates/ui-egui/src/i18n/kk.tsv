@@ -745,6 +745,15 @@
 	Couldn't start the update: {e}	Жаңартуды бастау мүмкін болмады: {e}
 	You have version {c}. Install and relaunch downloads the new version, checks it, and reopens PdfCraft.	Сізде {c} нұсқасы бар. «Орнату және қайта іске қосу» жаңа нұсқаны жүктеп алады, тексереді және PdfCraft-ты қайта ашады.
 	Asks GitHub for the latest release. Nothing is downloaded or installed until you choose Install and relaunch.	GitHub-тан соңғы шығарылымды сұрайды. «Орнату және қайта іске қосу» таңдалмайынша ештеңе жүктелмейді және орнатылмайды.
+	The original PdfCraft {v} is available.	Түпнұсқа PdfCraft {v} қолжетімді.
+	You have version {c}. Merge and update merges it into your fork on your build machines and runs the tests; the fork's new release follows.	Сізде {c} нұсқасы бар. «Біріктіру және жаңарту» оны құрастыру машиналарыңызда форкыңызға біріктіреді және сынақтарды іске қосады; содан кейін форктың жаңа шығарылымы шығады.
+	Asks GitHub for the latest releases. Nothing is merged or installed until you choose Merge and update.	GitHub-тан соңғы шығарылымдарды сұрайды. «Біріктіру және жаңарту» таңдалмайынша ештеңе біріктірілмейді және орнатылмайды.
+	Merge and update	Біріктіру және жаңарту
+	Starting the merge…	Біріктіру басталуда…
+	Couldn't start the merge: {e}	Біріктіруді бастау мүмкін болмады: {e}
+	Merging PdfCraft {v} into your fork. When the fork's release is out, PdfCraft offers the update; you can keep working.	PdfCraft {v} форкыңызға біріктірілуде. Форктың шығарылымы шыққанда, PdfCraft жаңартуды ұсынады; жұмысты жалғастыра бересіз.
+	Another update is already in progress or waiting for its release. Its installer asks you before it installs anything.	Басқа жаңарту орындалып жатыр немесе өз шығарылымын күтуде. Оның орнатқышы бірдеңе орнатпас бұрын сізден сұрайды.
+	Open the workflow page	Жұмыс процесі бетін ашу
 	none	жоқ
 	Declared conformance: {shown}	Жарияланған сәйкестік: {shown}
 	Output intent: {list}	Шығыс профилі: {list}
