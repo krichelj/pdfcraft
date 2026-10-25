@@ -242,7 +242,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   title="Sync upstream: storytold/pdfcraft@${up:0:12} (PdfCraft $version)"
   if [ -n "$stale" ]; then
     force_push_as_owner "$branch" "$pr_head"
-    gh pr edit "$pr" --repo "$REPO" --title "$title" --body-file "$record" >/dev/null
+    # The REST API: `gh pr edit` reads the PR's classic project cards, which GitHub now refuses.
+    gh api -X PATCH "repos/$REPO/pulls/$pr" -f title="$title" -F body=@"$record" >/dev/null
     echo "sync: rebuilt PR #$pr"
   else
     push_as_owner "$branch"
