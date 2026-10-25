@@ -93,6 +93,11 @@ case "$cmd" in
     done
     ;;
   fix)
+    # As the real tool: committing fixes over uncommitted tracked work is refused.
+    if [ -n "$prefix" ] && ! git diff HEAD --quiet; then
+      echo "oncall-llm: tracked files have uncommitted changes: commit or stash them before fixing with commits" >&2
+      exit 2
+    fi
     if [ "$mode" = fixfail ]; then echo "oncall-llm: still failing after 8 rounds" >&2; exit 1; fi
     case "$mode" in
       protected) mkdir -p .github/workflows && echo "# the LLM was here" >>.github/workflows/ci.yml ;;
@@ -243,6 +248,18 @@ sync assetbad "" SYNC_NO_LLM=1
 asset_change assetllm
 sync assetllm
 
+# 6c. The merged Cargo.lock is not what cargo writes for the merged manifests (upstream's lock,
+#     taken on a conflict, lacks the fork's own dependencies, e.g. muda for the menu bar): the
+#     first build rewrites it, and the sync commits that before the fix loop, which refuses to
+#     commit over uncommitted tracked work.
+upstream lock
+# Upstream adds a dependency to the app where the fork added muda (its menu bar), so Cargo.lock
+# conflicts and the sync takes upstream's, which lacks muda: cargo adds it back on the first build.
+awk '/^name = "pdfcraft"$/ { app = 1 } app && $0 == " \"log\"," { print; print " \"memchr\","; app = 0; next } { print }' \
+  "$T/up-lock/Cargo.lock" >"$T/lock.tmp" && mv "$T/lock.tmp" "$T/up-lock/Cargo.lock"
+up lock commit -qam "upstream: the app gains a dependency"
+sync lock
+
 # 7. Upstream edits the fork's own workflow where the fork changed it.
 upstream ownwf
 sed -i 's/^name: CI$/name: CI (upstream)/; s/runs-on: \[self-hosted, linux\]/runs-on: ubuntu-latest/' "$T/up-ownwf/.github/workflows/ci.yml"
@@ -310,6 +327,10 @@ check "merged assets that don't check out stop a sync without the LLM" stopped a
 check "  showing what the check said" said assetbad "accessibility.svg"
 check "  with the LLM, the sync goes on to its fix loop" said assetllm "the on-call LLM's fix loop runs that check"
 check "  and the fix loop ran" grep -q "^oncall-llm fix " "$T/s-assetllm.llm"
+
+check "a lockfile cargo rewrites after the merge: merged" ok lock
+check "  the rewrite committed before the fix loop" bash -c "git -C '$T/s-lock' log --format=%s | grep -q '^Fork: Cargo.lock as cargo writes it'"
+check "  and nothing left uncommitted" bash -c "git -C '$T/s-lock' diff HEAD --quiet"
 
 # rehash_catalogs rewrites only a catalog's own [[asset]] block. Upstream 0.13.0 lists catalogs
 # without a sha256 line; the old rewrite then put the catalog's hash on the next asset's line.
