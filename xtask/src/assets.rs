@@ -137,7 +137,10 @@ pub struct Fetched {
 }
 
 pub fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the workspace").to_path_buf()
+    // The checkout xtask runs in (gates::root reads CARGO_MANIFEST_DIR at run time), not the one it
+    // was compiled in: one xtask binary checks several clones (packaging/fork/test-sync.sh), and a
+    // compile-time root made every clone's asset check read the source checkout instead.
+    crate::gates::root()
 }
 
 pub fn load(root: &Path) -> Result<Manifest> {

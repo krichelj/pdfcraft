@@ -1,6 +1,8 @@
 # Every day: bring storytold/pdfcraft's new commits into the fork through a PR, and merge it once its
-# checks pass (packaging/fork/sync-upstream.sh). The merge is a push to main, which starts Release:
-# it builds the macOS app and publishes it, with the release record as its notes (release.yml).
+# checks pass (packaging/fork/sync-upstream.sh). The on-call LLM resolves the merge's conflicts and
+# fixes what fails CI's checks, before and after the PR opens. The merge is a push to main, which
+# starts Release: it builds the macOS app and publishes it, with the release record as its notes
+# (release.yml).
 #
 # The script pushes, opens and merges with the owner's gh login on the runner host (own-ci-runners):
 # a commit made with this workflow's own token can't change workflow files, which upstream merges
@@ -24,8 +26,12 @@ concurrency:
 jobs:
   sync:
     name: sync upstream
-    runs-on: [self-hosted, linux]
-    timeout-minutes: 180
+    # `primary` (own-ci-runners): the primary runner host takes it at once, the other only when the
+    # primary hasn't within the takeover delay, so a host that is down never stalls the sync.
+    runs-on: [self-hosted, linux, primary]
+    # The LLM's fix loop builds and tests the workspace, then the PR's checks are awaited (and fixed,
+    # at most twice).
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +42,36 @@ jobs:
         run: |
           gh auth status 2>&1 | grep -q 'workflow' \
             || { echo "::error::the runner host's gh login lacks the workflow scope: see own-ci-runners"; exit 1; }
+
+      # As in CI's test job: the fix loop runs CI's checks with the host's threads, in a build
+      # directory that persists on the runner host.
+      - name: Saturate host threads (saturate-the-bottleneck)
+        run: |
+          echo "CARGO_TARGET_DIR=$HOME/.cache/ci-target/pdfcraft-${{ github.job }}" >> "$GITHUB_ENV"
+          NPROC=$(nproc)
+          JOBS=$(( NPROC * 9 / 10 ))
+          BUILD_JOBS_CAP=64
+          BUILD_JOBS=$(( JOBS < BUILD_JOBS_CAP ? JOBS : BUILD_JOBS_CAP ))
+          {
+            echo "CARGO_BUILD_JOBS=${BUILD_JOBS}"
+            echo "RAYON_NUM_THREADS=${JOBS}"
+            echo "RUST_TEST_THREADS=${JOBS}"
+            echo "NEXTEST_TEST_THREADS=${JOBS}"
+          } >> "$GITHUB_ENV"
+
+      # The on-call LLM: the owner's oncall-llm on the runner host, its server and key configured
+      # there, never in this repo. `health` wakes the server when it is down. Unavailable is a
+      # warning: the sync then leaves conflicts and failing checks to a person, as before.
+      - name: Page the on-call LLM
+        run: |
+          llm=$(command -v oncall-llm || echo "$HOME/.local/bin/oncall-llm")
+          if [ -x "$llm" ] && timeout 2400 "$llm" health; then
+            echo "ONCALL_LLM=$llm" >> "$GITHUB_ENV"
+          else
+            echo "::warning::the on-call LLM is unavailable: conflicts and failing checks stop the sync for a person"
+            echo "SYNC_NO_LLM=1" >> "$GITHUB_ENV"
+          fi
+
       - name: Sync storytold/pdfcraft main
         run: packaging/fork/sync-upstream.sh
       # The gate on the fork's version line: main's version must be built on upstream's latest

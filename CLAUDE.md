@@ -30,8 +30,19 @@ environment, which deploys only from the `release` branch.
   `packaging/fork/sync-upstream.sh`. It merges storytold/pdfcraft main on a `sync/upstream-<sha>`
   branch, keeps only the fork's workflows, bumps the version (`<base>-p<N+1>`, or `<new base>-p1`)
   and writes the release record listing the upstream commits. It then opens the PR, waits for its
-  checks (CI's `test (shared code)` must pass) and merges it, which deletes the branch. Conflicts
-  outside Cargo.toml/Cargo.lock stop it for a person.
+  checks (CI's `test (shared code)` must pass) and merges it, which deletes the branch.
+- **The on-call LLM** (the owner's private `oncall-llm`, configured on the runner hosts, never in
+  this repo) takes what a merge breaks: conflicts the sync's rules don't cover (`resolve`, with
+  `packaging/fork/oncall-instructions.md`), then CI's test-job checks on the merged tree (`fix`,
+  one `Sync fix: ...` commit per round, before the release commit, listed in the record), then a
+  failing PR check with a digest of its log (at most twice). Its fixes never reach a push when they
+  touch `.github/`, `packaging/fork/`, `xtask/src/workflows.rs`, `deny.toml`, `.repo-structure.toml`,
+  `CLAUDE.md` or `AGENTS.md`, or add `#[ignore]`, `#[cfg(any())]` or `|| true` (`llm_guard` in
+  lib.sh); an edited catalog is re-hashed by the `assets` check's mechanical fix. The job asks for
+  `[self-hosted, linux, primary]` (listed in `.github/actionlint.yaml`):
+  the primary runner host at once, the other only when it hasn't answered. Without the LLM
+  (`SYNC_NO_LLM=1`, or `oncall-llm health` failing) or when it can't, the sync stops for a person.
+  `packaging/fork/test-sync.sh` covers each path with a stand-in.
 - It uses the owner's gh login on the runner host: the workflow token can't push workflow files,
   and its pushes start no workflows.
 - **Release** runs on every push to main. If the version is already tagged but the fork changed since,

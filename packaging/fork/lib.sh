@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Shared by the fork's automation (sync-upstream.sh, release-bump.sh): push and merge as the owner.
-# Sourced; needs REPO set.
+# Shared by the fork's automation (sync-upstream.sh, release-bump.sh, auto-merge.sh): push and merge
+# as the owner, and hand what a merge breaks to the on-call LLM. Sourced; needs REPO (and, for the
+# LLM, ROOT) set.
 
 die() {
   echo "::error::$*" >&2
@@ -15,10 +16,10 @@ push_as_owner() {
 
 # MERGE_IGNORE_CHECK names a check left out (the job running this, which is never "completed" while
 # it waits).
-# Usage: merge_when_green <pr> <timeout seconds>. Wait for every check on the PR's head, then merge it
-# (the branch is deleted); a failing check leaves it open. CI's test job must be among them, so a PR
-# whose checks haven't started yet is never "green".
-merge_when_green() {
+# Usage: wait_for_checks <pr> <timeout seconds>. Wait for every check on the PR's head: returns 0
+# when they all passed, 1 when one failed, 2 when they didn't finish in time. CI's test job must be
+# among them, so a PR whose checks haven't started yet is never "green".
+wait_for_checks() {
   local pr="$1" timeout="$2" head state deadline
   head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)
   deadline=$(($(date +%s) + timeout))
@@ -31,13 +32,191 @@ merge_when_green() {
           and ($r | all(.status == "completed")) then "SUCCESS"
         else "PENDING" end' 2>/dev/null || echo PENDING)
     case "$state" in
-      SUCCESS) break ;;
-      FAILURE) die "PR #$pr has failing checks; left open for a person" ;;
+      SUCCESS) return 0 ;;
+      FAILURE) return 1 ;;
     esac
-    [ "$(date +%s)" -lt "$deadline" ] || die "PR #$pr's checks didn't finish in time; left open"
+    [ "$(date +%s)" -lt "$deadline" ] || return 2
     sleep 30
   done
-  gh pr merge "$pr" --repo "$REPO" --merge --delete-branch
+}
+
+# Usage: merge_when_green <pr> <timeout seconds>. Wait for every check on the PR's head, then merge it
+# (the branch is deleted); a failing check leaves it open.
+merge_when_green() {
+  local pr="$1" rc=0
+  wait_for_checks "$pr" "$2" || rc=$?
+  case "$rc" in
+    0) gh pr merge "$pr" --repo "$REPO" --merge --delete-branch ;;
+    1) die "PR #$pr has failing checks; left open for a person" ;;
+    *) die "PR #$pr's checks didn't finish in time; left open" ;;
+  esac
+}
+
+# The on-call LLM (oncall-llm, the owner's private tool on the runner hosts; its server and keys
+# are configured there, never here): it resolves merge conflicts and repairs failing checks.
+# ONCALL_LLM names the command; SYNC_NO_LLM=1 leaves both to a person, as before it existed.
+llm_available() {
+  [ "${SYNC_NO_LLM:-}" != 1 ] && command -v "${ONCALL_LLM:-oncall-llm}" >/dev/null 2>&1
+}
+
+# The checks the LLM's fix loop must make pass: CI's test job (ci.yml), in its order, into FIX_ARGS.
+# SYNC_FIX_CHECKS (one NAME=COMMAND per line) replaces them (tests); SYNC_LLM_ROUNDS caps the rounds.
+# The mechanical fixes apply whatever the checks are: a formatter for fmt, and for assets the
+# catalog re-hash (an edited translation catalog changes its SHA-256, which no LLM can compute).
+fix_check_args() {
+  local line
+  FIX_ARGS=()
+  if [ -n "${SYNC_FIX_CHECKS:-}" ]; then
+    while IFS= read -r line; do
+      [ -z "$line" ] || FIX_ARGS+=(--check "$line")
+    done <<<"$SYNC_FIX_CHECKS"
+  else
+    FIX_ARGS=(
+      --check "fmt=cargo fmt --all -- --check"
+      --check "clippy=cargo clippy --workspace --all-targets -- -D warnings"
+      --check "test=cargo nextest run --workspace --no-fail-fast && cargo test --workspace --doc"
+      --check "layers=cargo xtask layers"
+      --check "assets=cargo xtask assets"
+      --check "cli-without-mcp=cargo check -p pdfcraft-cli --no-default-features"
+    )
+  fi
+  FIX_ARGS+=(
+    --autofix "fmt=cargo fmt --all"
+    --autofix "assets=bash -c '. packaging/fork/lib.sh && rehash_catalogs'"
+    --max-rounds "${SYNC_LLM_ROUNDS:-8}" --instructions "$ROOT/packaging/fork/oncall-instructions.md"
+  )
+}
+
+# What the on-call LLM's fixes may never change: what CI runs and how, the fork's automation and its
+# rules. A path ending in / covers everything under it. The LLM is told (oncall-instructions.md),
+# oncall-llm refuses such edits itself when it can (--protect), and llm_guard checks the commits.
+LLM_PROTECTED=(.github/ packaging/fork/ xtask/src/workflows.rs deny.toml .repo-structure.toml CLAUDE.md AGENTS.md)
+
+# Usage: llm_supports <flag>. Whether the installed oncall-llm's fix takes <flag> (older ones don't).
+llm_supports() {
+  local help
+  help=$("${ONCALL_LLM:-oncall-llm}" fix --help 2>/dev/null) || return 1
+  [[ "$help" == *"$1"* ]]
+}
+
+# Usage: llm_guard <rev>. Die, before anything is pushed, when the commits after <rev> (the LLM's)
+# change a protected path, or add a line that disables a test (#[ignore], #[cfg(any())], a skip
+# decorator) or hides a failing command (`|| true`, `|| :` in a script or workflow). A weaker test
+# or a muted check is never a fix; a person decides.
+llm_guard() {
+  local since="$1" path p bad="" muted g=(git -C "${ROOT:-.}")
+  while IFS= read -r path; do
+    for p in "${LLM_PROTECTED[@]}"; do
+      case "$p" in
+        */) if [[ "$path" == "$p"* ]]; then bad="$bad $path"; fi ;;
+        *) if [ "$path" = "$p" ]; then bad="$bad $path"; fi ;;
+      esac
+    done
+  done < <("${g[@]}" diff --name-only "$since" HEAD)
+  [ -z "$bad" ] || die "the on-call LLM's fix changes protected path(s):$bad; a person decides"
+  muted=$({
+    "${g[@]}" diff --unified=0 "$since" HEAD | grep -E '^\+[^+]' \
+      | grep -E '#\[ignore|#\[cfg\(any\(\)\)\]|@(pytest\.mark\.skip|unittest\.skip)' || true
+    "${g[@]}" diff --unified=0 "$since" HEAD -- '*.sh' '*.bash' '*.yml' '*.yaml' '*Makefile' | grep -E '^\+[^+]' \
+      | grep -E '\|\|[[:space:]]*(true|:)([[:space:];)]|$)' || true
+  })
+  [ -z "$muted" ] || die "the on-call LLM's fix disables a test or hides a failure; a person decides:
+$muted"
+}
+
+# Usage: llm_fix <commit prefix> [context file]. The LLM edits the tree at $ROOT until every check
+# passes, committing each round's edits with the prefix; fails when they still fail, and dies when
+# its commits break llm_guard. The files the merge changed (since sync-base) are named in its prompts.
+llm_fix() {
+  local extra=() before p
+  fix_check_args
+  [ -z "${2:-}" ] || extra+=(--context "$2")
+  if llm_supports --since && git rev-parse -q --verify sync-base >/dev/null; then extra+=(--since sync-base); fi
+  if llm_supports --protect; then
+    for p in "${LLM_PROTECTED[@]}"; do
+      case "$p" in */) extra+=(--protect "$p**") ;; *) extra+=(--protect "$p") ;; esac
+    done
+  fi
+  before=$(git -C "$ROOT" rev-parse HEAD)
+  "${ONCALL_LLM:-oncall-llm}" fix --repo "$ROOT" "${FIX_ARGS[@]}" "${extra[@]}" --commit-prefix "$1" || return
+  llm_guard "$before"
+}
+
+# Usage: ci_failure_log <pr>. What the failed jobs' logs on the PR's head commit say about the
+# failure (ci_log_digest): a whole Test log is ~900 KB, far past the model's context.
+ci_failure_log() {
+  local head id
+  head=$(gh pr view "$1" --repo "$REPO" --json headRefOid --jq .headRefOid)
+  for id in $(gh run list --repo "$REPO" --commit "$head" --status failure --json databaseId --jq '.[].databaseId'); do
+    gh run view "$id" --repo "$REPO" --log-failed || true
+  done | ci_log_digest
+}
+
+# Usage: ci_log_digest <log. GitHub's job/step/time prefixes and colour codes stripped; nextest's
+# PASS/SKIP lines and cargo's progress lines dropped; every line that mentions an error, a panic, a
+# failure, an assertion or a warning kept with 3 lines before and 12 after, gaps marked "...",
+# repeated lines collapsed; at most SYNC_CI_LOG_BYTES (default 40000) bytes, from the start. A log
+# with none of those lines gives its last SYNC_CI_LOG_BYTES instead.
+ci_log_digest() {
+  local esc=$'\033'
+  sed -E -e "s/${esc}\[[0-9;]*[A-Za-z]//g" -e 's/^[^\t]*\t[^\t]*\t[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z ?//' \
+    | awk -v before=3 -v after=12 -v max="${SYNC_CI_LOG_BYTES:-40000}" '
+      function out(s) { bytes += length(s) + 1; if (bytes > max) return 0; print s; return 1 }
+      /^[[:space:]]*(PASS|SKIP) \[/ { next }
+      /^[[:space:]]*(Compiling|Checking|Downloaded|Downloading|Fresh|Blocking|Running|Doc-tests) / { next }
+      {
+        n++; line[n] = $0
+        if (tolower($0) ~ /error|panicked|failed|fail \[|assertion|warning:/) {
+          any = 1
+          for (i = n - before; i <= n + after; i++) keep[i] = 1
+        }
+      }
+      END {
+        if (!any) {
+          first = n + 1
+          while (first > 1 && total + length(line[first - 1]) + 1 <= max) { first--; total += length(line[first]) + 1 }
+          for (i = first; i <= n; i++) print line[i]
+          exit
+        }
+        for (i = 1; i <= n; i++) {
+          if (!keep[i]) { gap = 1; continue }
+          if (gap && printed && !out("...")) exit
+          gap = 0
+          if (printed && line[i] == prev) continue
+          if (!out(line[i])) exit
+          prev = line[i]; printed = 1
+        }
+      }'
+}
+
+# Usage: merge_when_green_or_fix <pr> <timeout seconds> <branch>. merge_when_green, except that a
+# failing check goes to the on-call LLM with the failed jobs' logs, at most SYNC_CI_FIX_RETRIES
+# (default 2) times: its fix is pushed to the PR's branch (checked out at $ROOT) and the new head's
+# checks are awaited. Without the LLM, or past the retries, the PR is left open for a person.
+merge_when_green_or_fix() {
+  local pr="$1" timeout="$2" branch="$3" tries=0 rc log
+  while :; do
+    rc=0
+    wait_for_checks "$pr" "$timeout" || rc=$?
+    case "$rc" in
+      0)
+        gh pr merge "$pr" --repo "$REPO" --merge --delete-branch
+        return
+        ;;
+      2) die "PR #$pr's checks didn't finish in time; left open" ;;
+    esac
+    if [ "$tries" -ge "${SYNC_CI_FIX_RETRIES:-2}" ] || ! llm_available; then
+      die "PR #$pr has failing checks; left open for a person"
+    fi
+    tries=$((tries + 1))
+    echo "sync: PR #$pr has failing checks; the on-call LLM fixes them (attempt $tries)"
+    log="$(mktemp)"
+    ci_failure_log "$pr" >"$log"
+    llm_fix "Sync fix (CI, attempt $tries)" "$log" \
+      || die "the on-call LLM couldn't fix PR #$pr's failing checks; left open for a person"
+    rm -f "$log"
+    push_as_owner "$branch"
+  done
 }
 
 # Usage: fill_summary <record> <file>. Replace the record's "- TODO: ..." line with the file's lines
