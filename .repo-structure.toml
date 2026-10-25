@@ -1,0 +1,34 @@
+# repo-structure exemptions for the fork. The layout belongs to upstream storytold/pdfcraft: the
+# fork takes upstream's tree on every daily sync (CLAUDE.md, fork rules), so restructuring upstream's
+# directories would conflict with every merge. Fork-owned paths (packaging/fork, docs/fork) follow
+# every rule, and the structure map is the fork's own (docs/STRUCTURE.md).
+
+[[exempt]]
+rule = "flat-dir"
+path = "crates/**"
+reason = "Upstream's crate layout: splitting its source files into subfolders would conflict with every daily sync."
+
+[[exempt]]
+rule = "flat-dir"
+path = "apps/**"
+reason = "Upstream's app layout: splitting its source and test files would conflict with every daily sync."
+
+[[exempt]]
+rule = "flat-dir"
+path = "xtask/**"
+reason = "Upstream's xtask layout (the fork's own modules sit beside upstream's, e.g. fork_version.rs, fork_notes.rs)."
+
+[[exempt]]
+rule = "undocumented-dir"
+path = "packaging"
+reason = "Upstream's packaging root; the fork documents its own part, packaging/fork."
+
+[[exempt]]
+rule = "undocumented-dir"
+path = "packaging/*"
+reason = "Upstream's per-platform packaging, which the fork must take unchanged from upstream (CLAUDE.md, macOS-only fork rule); packaging/fork has its README."
+
+[[exempt]]
+rule = "undocumented-dir"
+path = "crates/*/fuzz"
+reason = "cargo-fuzz target directories generated in upstream's layout; the crate's own docs describe what is fuzzed."
