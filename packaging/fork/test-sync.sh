@@ -399,6 +399,21 @@ check "  and nothing left uncommitted" bash -c "git -C '$T/s-lock' diff HEAD --q
 check "  with the fork's newer tokio, not upstream's older one" bash -c \
   "[ \"\$(grep -A1 '^name = \"tokio\"$' '$T/s-lock/Cargo.lock' | sed -n 's/^version = //p')\" = \"\$(grep -A1 '^name = \"tokio\"$' '$T/fork/Cargo.lock' | sed -n 's/^version = //p')\" ]"
 
+# private-tmp.sh: the command gets an empty temp directory of its own, which is gone afterwards
+# however the command ends, and the command's exit status is the script's.
+pt="$T/private-tmp"
+mkdir -p "$pt"
+pt_run() { PRIVATE_TMP_PARENT="$pt" "$SRC/packaging/fork/private-tmp.sh" "$@"; }
+check "private-tmp: the command's temp directory is new, empty and under the parent" bash -c \
+  "$(declare -f pt_run); pt='$pt' SRC='$SRC'; d=\$(pt_run bash -c 'ls -A \"\$TMPDIR\" | wc -l; echo \"\$TMPDIR\"'); [ \"\$(echo \"\$d\" | head -1)\" = 0 ] && case \"\$(echo \"\$d\" | tail -1)\" in '$pt'/pdfcraft-tests.*) true ;; *) false ;; esac"
+check "  what the command leaves there is removed, and its status kept" bash -c \
+  "$(declare -f pt_run); pt='$pt' SRC='$SRC'; pt_run bash -c 'mkdir -p \"\$TMPDIR/a/b\"; touch \"\$TMPDIR/a/b/f\"; exit 7' 2>/dev/null; [ \$? = 7 ] && [ -z \"\$(ls -A '$pt')\" ]"
+check "  and when the command succeeds" bash -c \
+  "$(declare -f pt_run); pt='$pt' SRC='$SRC'; pt_run bash -c 'touch \"\$TMPDIR/f\"' 2>/dev/null && [ -z \"\$(ls -A '$pt')\" ]"
+check "  and when the job is cancelled (SIGTERM)" bash -c \
+  "$(declare -f pt_run); pt='$pt' SRC='$SRC'; timeout -s TERM 2 bash -c \"\$(declare -f pt_run); pt='$pt' SRC='$SRC'; pt_run bash -c 'touch \\\"\\\$TMPDIR/f\\\"; sleep 30'\" 2>/dev/null; [ -z \"\$(ls -A '$pt')\" ]"
+check "  and with no command it refuses" bash -c "! '$SRC/packaging/fork/private-tmp.sh' 2>/dev/null"
+
 # keep_newer_locked with a stand-in cargo: which packages it raises, and to what.
 kn="$T/keepnewer"
 mkdir -p "$kn/bin"

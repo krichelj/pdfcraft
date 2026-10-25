@@ -50,8 +50,9 @@ mod tests {
     fn tests_run_side_by_side_not_one_binary_at_a_time() {
         let test = jobs(CI).into_iter().find(|(name, _)| name == "test").expect("ci.yml has a test job").1;
         let cmds = commands(&test);
-        assert!(cmds.iter().any(|c| c.starts_with("cargo nextest run --workspace")), "the tests run under nextest");
-        assert!(cmds.iter().any(|c| c.starts_with("cargo test --workspace --doc")), "and the doctests, which nextest skips");
+        // `contains`: the suite runs inside packaging/fork/private-tmp.sh, after the wrapper's name.
+        assert!(cmds.iter().any(|c| c.contains("cargo nextest run --workspace")), "the tests run under nextest");
+        assert!(cmds.iter().any(|c| c.contains("cargo test --workspace --doc")), "and the doctests, which nextest skips");
         // `cargo test` runs its test binaries one after another; only doctests may use it.
         for (file, text) in ALL {
             for c in commands(text).into_iter().filter(|c| c.contains("cargo test")) {
@@ -212,6 +213,11 @@ mod tests {
             assert!(test.contains(c), "ci.yml's test job runs `{c}`");
             assert!(lib.contains(c), "the LLM's fix loop runs `{c}` too");
         }
+        // Both run the suite in a temp directory of their own, removed afterwards: upstream's tests
+        // leave ~300 folders per run, and 58,000 of them filled the runner host's /tmp.
+        let contained = "packaging/fork/private-tmp.sh bash -c 'cargo nextest run --workspace --no-fail-fast && cargo test --workspace --doc'";
+        assert!(test.contains(contained), "ci.yml's test job runs the suite in its own temp directory");
+        assert!(lib.contains(contained), "and so does the LLM's fix loop");
         // And Packaging lint's: a merged script that doesn't parse failed the 0.13.0 sync's PR while
         // the loop, running CI's test job only, reported every check passing.
         let lint = file("packaging-lint.yml");

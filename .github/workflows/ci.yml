@@ -105,8 +105,9 @@ jobs:
         run: |
           cargo nextest --version >/dev/null 2>&1 \
             || { echo "::error::cargo-nextest missing on the runner: see own-ci-runners"; exit 1; }
-          cargo nextest run --workspace --no-fail-fast
-          cargo test --workspace --doc
+          # In a temp directory of their own, removed afterwards: upstream's tests leave ~300
+          # folders in it per run, which once filled the runner host's /tmp (packaging/fork/private-tmp.sh).
+          packaging/fork/private-tmp.sh bash -c 'cargo nextest run --workspace --no-fail-fast && cargo test --workspace --doc'
 
       # A version bump to a fork release not released yet needs its record (docs/fork/releases);
       # the Release workflow refuses one without it, so the PR that bumps the version does too.

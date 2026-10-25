@@ -92,7 +92,7 @@ fix_check_args() {
     FIX_ARGS=(
       --check "fmt=cargo fmt --all -- --check"
       --check "clippy=cargo clippy --workspace --all-targets -- -D warnings"
-      --check "test=cargo nextest run --workspace --no-fail-fast && cargo test --workspace --doc"
+      --check "test=packaging/fork/private-tmp.sh bash -c 'cargo nextest run --workspace --no-fail-fast && cargo test --workspace --doc'"
       --check "layers=cargo xtask layers"
       --check "assets=cargo xtask assets"
       --check "cli-without-mcp=cargo check -p pdfcraft-cli --no-default-features"
