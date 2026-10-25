@@ -113,7 +113,13 @@ if [ -z "$pr" ]; then
   fi
   # The merged catalogs' hashes, then every asset must check out (AGENTS.md §1), or a person decides.
   rehash_catalogs
-  cargo xtask assets >/dev/null 2>&1 || die "the merged assets don't match ATTRIBUTION.toml: run cargo xtask assets"
+  if ! assets_out=$(cargo xtask assets 2>&1); then
+    printf '%s\n' "$assets_out" | tail -20
+    # With the LLM, its fix loop runs this same check (and the build it needs: a merge that broke
+    # xtask fails here too), so the sync goes on to it; without, a person decides.
+    llm_available || die "the merged assets don't check out (cargo xtask assets above)"
+    echo "sync: the merged assets don't check out yet; the on-call LLM's fix loop runs that check"
+  fi
   if ! git diff --quiet ATTRIBUTION.toml; then
     git add ATTRIBUTION.toml
     git commit --quiet -m "Fork: record the merged translation catalogs' hashes
