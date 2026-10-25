@@ -268,7 +268,7 @@ fn no_tool_panics_on_hostile_arguments() {
                             for value in values {
                                 let mut obj = plausible(def);
                                 let fixed = fixture(&mut a, &root, def.name);
-                                obj.extend(fixed);
+                                obj.extend(fixed.clone());
                                 obj.insert(prop.clone(), value.clone());
                                 calls += 1;
                                 if let Err(e) = guarded(&mut a, def.name, &Value::Object(obj)) {
