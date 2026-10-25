@@ -14,6 +14,13 @@ push_as_owner() {
   git -c credential.helper= -c credential.helper='!gh auth git-credential' push --quiet -u origin "$1"
 }
 
+# Usage: force_push_as_owner <branch> <sha>. Replace the remote branch, only if it is still at <sha>
+# (a rebuilt sync PR: never over a commit someone pushed since it was read).
+force_push_as_owner() {
+  git -c credential.helper= -c credential.helper='!gh auth git-credential' \
+    push --quiet -u --force-with-lease="$1:$2" origin "$1"
+}
+
 # MERGE_IGNORE_CHECK names a check left out (the job running this, which is never "completed" while
 # it waits).
 # Usage: wait_for_checks <pr> <timeout seconds>. Wait for every check on the PR's head: returns 0
@@ -114,8 +121,8 @@ llm_supports() {
 
 # Usage: llm_guard <rev>. Die, before anything is pushed, when the commits after <rev> (the LLM's)
 # change a protected path, or add a line that disables a test (#[ignore], #[cfg(any())], a skip
-# decorator) or hides a failing command (`|| true`, `|| :` in a script or workflow). A weaker test
-# or a muted check is never a fix; a person decides.
+# decorator), hides a failing command (`|| true`, `|| :` in a script or workflow), or comments out a
+# line it removed. A weaker test or a muted check is never a fix; a person decides.
 llm_guard() {
   local since="$1" path p bad="" muted g=(git -C "${ROOT:-.}")
   while IFS= read -r path; do
@@ -130,6 +137,11 @@ llm_guard() {
   muted=$({
     "${g[@]}" diff --unified=0 "$since" HEAD | grep -E '^\+[^+]' \
       | grep -E '#\[ignore|#\[cfg\(any\(\)\)\]|@(pytest\.mark\.skip|unittest\.skip)' || true
+    # A removed line put back behind a comment opener: code commented out to quiet a check.
+    "${g[@]}" diff --unified=0 "$since" HEAD | awk '
+      /^-[^-]/ { line = substr($0, 2); gsub(/^[ \t]+|[ \t]+$/, "", line); if (length(line) > 3) gone[line] = 1 }
+      /^\+[^+]/ { line = substr($0, 2); if (match(line, /^[ \t]*(#+|\/\/+|--+|\/\*+)[ \t]*/)) {
+        rest = substr(line, RLENGTH + 1); gsub(/[ \t]+$/, "", rest); if (rest in gone) print "+" line } }' || true
     "${g[@]}" diff --unified=0 "$since" HEAD -- '*.sh' '*.bash' '*.yml' '*.yaml' '*Makefile' | grep -E '^\+[^+]' \
       | grep -E '\|\|[[:space:]]*(true|:)([[:space:];)]|$)' || true
   })

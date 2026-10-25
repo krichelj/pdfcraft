@@ -48,7 +48,26 @@ branch="sync/upstream-${up:0:12}"
 echo "sync: $new new upstream commits, up to ${up:0:12}; branch $branch"
 
 pr=$(gh pr list --repo "$REPO" --head "$branch" --state open --json number --jq '.[0].number // empty')
-if [ -z "$pr" ]; then
+stale=""
+if [ -n "$pr" ]; then
+  git fetch --quiet origin "$branch"
+  pr_head=$(git rev-parse FETCH_HEAD)
+  if git merge-base --is-ancestor sync-base "$pr_head"; then
+    # An earlier run opened the PR on today's main: work on its head, where a fix for a failing
+    # check goes. A dry run pushes nothing, so it stops here.
+    if [ "${SYNC_DRY_RUN:-}" = 1 ]; then
+      echo "sync: dry run; PR #$pr is open on the current main; stopping before its checks are fixed or it is merged"
+      exit 0
+    fi
+    git checkout --quiet -B "$branch" "$pr_head"
+  else
+    # The PR predates main's latest commits (a fix to this automation, say): the merge is made again
+    # from today's main and replaces the PR's branch.
+    echo "sync: PR #$pr is behind main; rebuilding it from the current main"
+    stale=1
+  fi
+fi
+if [ -z "$pr" ] || [ -n "$stale" ]; then
   current=$(cargo xtask version 2>/dev/null | tail -1)
   git checkout --quiet -B "$branch"
   took_deny=""
@@ -220,16 +239,18 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     echo "sync: dry run; stopping before the push (branch $branch, version $version)"
     exit 0
   fi
-  push_as_owner "$branch"
-  pr=$(gh pr create --repo "$REPO" --base main --head "$branch" \
-    --title "Sync upstream: storytold/pdfcraft@${up:0:12} (PdfCraft $version)" \
-    --body-file "$record" | sed -n 's#.*/pull/\([0-9]*\)$#\1#p')
-  [ -n "$pr" ] || die "couldn't open the PR"
-  echo "sync: opened PR #$pr"
-else
-  # An earlier run opened the PR: work on its head, where a fix for a failing check goes.
-  git fetch --quiet origin "$branch"
-  git checkout --quiet -B "$branch" FETCH_HEAD
+  title="Sync upstream: storytold/pdfcraft@${up:0:12} (PdfCraft $version)"
+  if [ -n "$stale" ]; then
+    force_push_as_owner "$branch" "$pr_head"
+    gh pr edit "$pr" --repo "$REPO" --title "$title" --body-file "$record" >/dev/null
+    echo "sync: rebuilt PR #$pr"
+  else
+    push_as_owner "$branch"
+    pr=$(gh pr create --repo "$REPO" --base main --head "$branch" --title "$title" \
+      --body-file "$record" | sed -n 's#.*/pull/\([0-9]*\)$#\1#p')
+    [ -n "$pr" ] || die "couldn't open the PR"
+    echo "sync: opened PR #$pr"
+  fi
 fi
 
 merge_when_green_or_fix "$pr" "${SYNC_CHECKS_TIMEOUT:-7200}" "$branch"
