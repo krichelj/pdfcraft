@@ -286,6 +286,13 @@ mkdir -p "$T/ghissue"
 printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/ghissue/calls"\ncase "$1 $2" in "issue list") echo 5 ;; esac\n' "$T" >"$T/ghissue/gh"
 chmod +x "$T/ghissue/gh"
 sync codeissue2 "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghissue:$PATH"
+# With issues disabled (a stand-in gh whose issue commands fail), the sync still says what stopped it.
+code_change codenoissue
+mkdir -p "$T/ghnoissue"
+# shellcheck disable=SC2016 # the stand-in's own $1, written as it is
+printf '#!/usr/bin/env bash\ncase "$1" in issue) echo "the repository has disabled issues" >&2; exit 1 ;; esac\n' >"$T/ghnoissue/gh"
+chmod +x "$T/ghnoissue/gh"
+sync codenoissue "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghnoissue:$PATH"
 code_change llm
 sync llm
 code_change llmdown
@@ -391,6 +398,8 @@ check "  for real: an issue for the owner" grep -q "issue create --repo krichelj
 # shellcheck disable=SC2016 # literal backticks, the issue body's Markdown
 check "  naming the conflicted file" grep -q '^- `crates/ui-egui/src/updates.rs`$' "$T/ghnone/calls"
 check "  before anything is pushed" bash -c "! grep -q 'git-credential\\|stopping before the push' '$T/s-codeissue.out' && ! git -C '$T/fork' rev-parse -q --verify 'sync/upstream-$(git -C "$T/up-codeissue" rev-parse --short=12 HEAD)' >/dev/null"
+check "  with issues disabled, it still names the conflict" stopped codenoissue "conflicts that need a person: crates/ui-egui/src/updates.rs"
+check "  and warns that it couldn't open the issue" said codenoissue "couldn't open an issue to ask a person"
 check "  and once per sync branch: an open issue gets a comment" grep -q "^gh issue comment 5 " "$T/ghissue/calls"
 check "a code conflict is resolved by the on-call LLM and merged" ok llm
 check "  which got the conflicted repo and the fork's merge rules" \
