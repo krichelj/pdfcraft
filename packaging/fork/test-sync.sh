@@ -179,6 +179,22 @@ echo "upstream note" >>"$T/up-plain/NOTICE"
 up plain commit -qam "upstream: an ordinary change"
 sync plain
 
+# 2b. A long upstream history (the 0.13.0 sync brought 1,602 commits): the record lists the newest
+#     40 and counts the rest. Their subjects outgrow a pipe buffer, so a reader that stops early must
+#     not kill the writer (git log | head under pipefail died of SIGPIPE, exit 141).
+upstream many
+tip=$(up many rev-parse HEAD)
+{
+  for i in $(seq 1 1500); do
+    printf 'commit refs/heads/main\ncommitter T <t@example.com> %d +0000\n' $((1700000000 + i))
+    printf 'data <<EOM\nupstream: change %04d, with a subject as long as a real one so the list outgrows a pipe buffer\nEOM\n' "$i"
+    if [ "$i" = 1 ]; then printf 'from %s\n' "$tip"; fi
+    printf '\n'
+  done
+} | up many fast-import --quiet
+up many reset -q --hard main
+sync many
+
 # 3. Upstream adds a workflow for another platform or GitHub's runners.
 upstream wf
 printf 'name: X\non: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' >"$T/up-wf/.github/workflows/x.yml"
@@ -289,6 +305,9 @@ check "  the fork's next patch version, $next" version_is plain "$next"
 check "  and its record, which passes, naming the commit" notes_ok plain "$next"
 check "  the record lists the upstream commit" grep -q "upstream: an ordinary change" "$T/s-plain/docs/fork/releases/v$next.md"
 check "  assets still check out" assets_ok plain
+check "a long upstream history is merged" ok many
+check "  its record lists the newest 40 commits and counts the rest" bash -c \
+  "grep -q 'upstream: change 1461,' '$T/s-many/docs/fork/releases/v$next.md' && grep -q 'and 1460 more' '$T/s-many/docs/fork/releases/v$next.md' && ! grep -q 'upstream: change 1460,' '$T/s-many/docs/fork/releases/v$next.md'"
 check "a new upstream workflow: merged" ok wf
 check "  and removed" bash -c "! test -e '$T/s-wf/.github/workflows/x.yml'"
 check "  the fork's workflows stay" in_tree wf .github/workflows/sync-upstream.yml
