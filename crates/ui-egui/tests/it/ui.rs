@@ -279,7 +279,7 @@ fn expanding_all_tools_from_read_mode_restores_the_right_panel() {
 fn expanding_all_tools_from_edit_puts_edit_text_down() {
     use pdfcraft_ui_egui::{LeftPanel, Mode, QuickTool};
     let mut h = harness(|app| app.open_bytes("fixture.pdf", None, FIXTURE.to_vec()).expect("fixture opens"));
-    h.get_by_label("Edit").click();
+    support::outside_menus(&h, "Edit").click();
     h.run_steps(3);
     assert_eq!(h.state().quick_tool, QuickTool::EditText);
     h.state_mut().set_option("tools", "full").unwrap();
@@ -706,11 +706,11 @@ fn narrow_tab_strips_accept_vertical_wheel_scrolling() {
             app
         });
         h.run_steps(4);
-        let last = h.get_by_label("narrow-11.pdf").rect();
+        let last = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("narrow-11.pdf")).rect();
         assert!(last.center().x > 28.0 && last.right() < width - 100.0, "active tab: {last:?}");
         h.state_mut().active = Some(0);
         h.run_steps(4);
-        let first = h.get_by_label("narrow-00.pdf").rect();
+        let first = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("narrow-00.pdf")).rect();
         assert!(first.center().x > 28.0 && first.right() < width - 100.0);
         h.event(egui::Event::PointerMoved(first.center()));
         for _ in 0..8 {
@@ -723,9 +723,9 @@ fn narrow_tab_strips_accept_vertical_wheel_scrolling() {
             });
             h.run_steps(8);
         }
-        let last = h.get_by_label("narrow-11.pdf").rect();
+        let last = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("narrow-11.pdf")).rect();
         assert!(last.center().x > 28.0 && last.right() < width - 100.0, "scrolled tab: {last:?}");
-        h.get_by_label("narrow-11.pdf").click();
+        h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("narrow-11.pdf")).click();
         h.run_steps(4);
         assert_eq!(h.state().active, Some(11));
         assert!(h.get_by_label_contains("Display theme:").rect().right() <= width);
@@ -1640,7 +1640,7 @@ fn the_edit_tab_turns_on_edit_text_and_images() {
     use pdfcraft_ui_egui::{Mode, QuickTool};
     let mut h = harness(|app| app.open_bytes("fixture.pdf", None, FIXTURE.to_vec()).expect("fixture opens"));
     assert_eq!(h.state().quick_tool, QuickTool::Select);
-    h.get_by_label("Edit").click();
+    support::outside_menus(&h, "Edit").click();
     h.run_steps(3);
     assert_eq!(h.state().mode, Mode::Edit);
     assert_eq!(h.state().quick_tool, QuickTool::EditText);
@@ -1649,7 +1649,7 @@ fn the_edit_tab_turns_on_edit_text_and_images() {
     assert_eq!(h.state().mode, Mode::AllTools);
     assert_eq!(h.state().quick_tool, QuickTool::Select);
     // Another tool picked inside Edit is not taken away by leaving it.
-    h.get_by_label("Edit").click();
+    support::outside_menus(&h, "Edit").click();
     h.run_steps(3);
     h.state_mut().quick_tool = QuickTool::Hand;
     h.get_by_label("Convert").click();
@@ -1663,7 +1663,7 @@ fn the_edit_tab_turns_on_edit_text_and_images() {
 fn organize_pages_from_the_edit_panel_opens_its_panel() {
     use pdfcraft_ui_egui::LeftPanel;
     let mut h = harness(|app| app.open_bytes("fixture.pdf", None, FIXTURE.to_vec()).expect("fixture opens"));
-    h.get_by_label("Edit").click();
+    support::outside_menus(&h, "Edit").click();
     h.run_steps(3);
     assert_eq!(h.state().left, LeftPanel::Tool("edit"));
     assert!(
@@ -1681,7 +1681,7 @@ fn organize_pages_from_the_edit_panel_opens_its_panel() {
 #[test]
 fn the_edit_panel_keeps_the_add_update_remove_menu() {
     let mut h = harness(|app| app.open_bytes("fixture.pdf", None, FIXTURE.to_vec()).expect("fixture opens"));
-    h.get_by_label("Edit").click();
+    support::outside_menus(&h, "Edit").click();
     h.run_steps(3);
     h.get_by_label("Watermark").click();
     h.run_steps(3);
