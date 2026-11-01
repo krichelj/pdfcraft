@@ -11,7 +11,7 @@ with `mkfs.hfsplus` (hfsprogs) and libdmg-hfsplus's `hfsplus` and `dmg`.
 
 | File | What |
 |---|---|
-| `background.svg` | Source of the background: the app icon (`assets/app-icon/pdfcraft.svg`, linked, not copied) cropped as a cover on the PdfCraft colour field (`#12a58a`), Ink and Paper. Its text (Inter, JetBrains Mono) is outlined, so rendering it needs no fonts. No paper grain: noise doesn't compress, and this keeps `background.tiff` small. |
+| `background.svg` | Source of the background: the app icon (`assets/app-icon/pdfcraft.svg`, linked, not copied) cropped as a cover on the PdfCraft colour field (`#b70228`), Ink and Paper. Its text (Inter, JetBrains Mono) is outlined, so rendering it needs no fonts. No paper grain: noise doesn't compress, and this keeps `background.tiff` small. |
 | `background.tiff` | The background at 1x (660 × 400 px, 72 dpi) and 2x (1320 × 800 px, 144 dpi) in one HiDPI TIFF (16-colour palette, Deflate, sRGB). Goes to `.background/background.tiff`. |
 | `dmg-layout.DS_Store` | Finder's view settings for the volume: window size, icon size 128, PdfCraft.app at (326, 205), `Applications` at (574, 205), and the background. Goes to `.DS_Store` in the image; named so it isn't mistaken for (or ignored like) a Finder-generated `.DS_Store`. |
 | `make-dmg.sh` | Builds the DMG from a signed `PdfCraft.app`: stages the app, the `Applications` link and the two files above, then writes and checks the image (see above). |
