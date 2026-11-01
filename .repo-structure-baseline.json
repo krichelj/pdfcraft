@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "about": "Structure violations this repository had when it adopted repo-structure. Each is tolerated for the reason given; anything not listed is refused, and an entry whose violation is fixed must be removed (`repo-structure baseline --prune`).",
+  "entries": [
+    {
+      "rule": "map-missing-dir",
+      "path": "licenses",
+      "reason": "Upstream storytold/pdfcraft's own layout, taken as is by every sync merge; the fork never restructures upstream's tree (CLAUDE.md fork rules)"
+    },
+    {
+      "rule": "undocumented-dir",
+      "path": "crates/ui-egui/src/app",
+      "reason": "Upstream storytold/pdfcraft's own layout, taken as is by every sync merge; the fork never restructures upstream's tree (CLAUDE.md fork rules)"
+    },
+    {
+      "rule": "undocumented-dir",
+      "path": "crates/ui-egui/src/persist",
+      "reason": "Upstream storytold/pdfcraft's own layout, taken as is by every sync merge; the fork never restructures upstream's tree (CLAUDE.md fork rules)"
+    },
+    {
+      "rule": "undocumented-dir",
+      "path": "crates/ui-egui/src/platform",
+      "reason": "Upstream storytold/pdfcraft's own layout, taken as is by every sync merge; the fork never restructures upstream's tree (CLAUDE.md fork rules)"
+    },
+    {
+      "rule": "undocumented-dir",
+      "path": "crates/ui-egui/src/tools",
+      "reason": "Upstream storytold/pdfcraft's own layout, taken as is by every sync merge; the fork never restructures upstream's tree (CLAUDE.md fork rules)"
+    },
+    {
+      "rule": "undocumented-dir",
+      "path": "crates/ui-egui/src/workflows",
+      "reason": "Upstream storytold/pdfcraft's own layout, taken as is by every sync merge; the fork never restructures upstream's tree (CLAUDE.md fork rules)"
+    }
+  ]
+}
