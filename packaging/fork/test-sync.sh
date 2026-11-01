@@ -271,7 +271,7 @@ sync deny "sed -i '/RUSTSEC-2024-0370/a\\    { id = \"RUSTSEC-2099-0002\", reaso
 #    conflict; without it (SYNC_NO_LLM=1, or the server down) a person decides.
 code_change() {
   upstream "$1"
-  sed -i 's#^pub const RELEASES_PAGE: &str = .*#pub const RELEASES_PAGE: \&str = "https://example.com/upstream";#' "$T/up-$1/crates/ui-egui/src/updates.rs"
+  sed -i 's#^pub const RELEASES_PAGE: &str = .*#pub const RELEASES_PAGE: \&str = "https://example.com/upstream";#' "$T/up-$1/crates/ui-egui/src/platform/updates.rs"
   up "$1" commit -qam "upstream: change the releases page"
 }
 code_change code
@@ -391,23 +391,23 @@ check "  with upstream's entry" grep -q "RUSTSEC-2099-0001" "$T/s-deny/deny.toml
 check "  and the fork's entry is kept or upstream's policy passes alone" grep -q "RUSTSEC-2026-0371" "$T/s-deny/deny.toml"
 check "  checked by cargo deny" said deny "cargo deny passes"
 check "a code conflict without the LLM (SYNC_NO_LLM=1) stops the sync" stopped code "conflicts that need a person"
-check "  naming the file" said code "crates/ui-egui/src/updates.rs"
+check "  naming the file" said code "crates/ui-egui/src/platform/updates.rs"
 check "  without asking the LLM anything" bash -c "! test -s '$T/s-code.llm'"
 check "  saying it would ask a person (a dry run opens no issue)" said code "dry run; would ask a person: upstream merge conflicts"
 check "  for real: an issue for the owner" grep -q "issue create --repo krichelj/pdfcraft --title sync/upstream-$(git -C "$T/up-codeissue" rev-parse --short=12 HEAD): upstream merge conflicts" "$T/ghnone/calls"
 # shellcheck disable=SC2016 # literal backticks, the issue body's Markdown
-check "  naming the conflicted file" grep -q '^- `crates/ui-egui/src/updates.rs`$' "$T/ghnone/calls"
+check "  naming the conflicted file" grep -q '^- `crates/ui-egui/src/platform/updates.rs`$' "$T/ghnone/calls"
 check "  before anything is pushed" bash -c "! grep -q 'git-credential\\|stopping before the push' '$T/s-codeissue.out' && ! git -C '$T/fork' rev-parse -q --verify 'sync/upstream-$(git -C "$T/up-codeissue" rev-parse --short=12 HEAD)' >/dev/null"
-check "  with issues disabled, it still names the conflict" stopped codenoissue "conflicts that need a person: crates/ui-egui/src/updates.rs"
+check "  with issues disabled, it still names the conflict" stopped codenoissue "conflicts that need a person: crates/ui-egui/src/platform/updates.rs"
 check "  and warns that it couldn't open the issue" said codenoissue "couldn't open an issue to ask a person"
 check "  and once per sync branch: an open issue gets a comment" grep -q "^gh issue comment 5 " "$T/ghissue/calls"
 check "a code conflict is resolved by the on-call LLM and merged" ok llm
 check "  which got the conflicted repo and the fork's merge rules" \
   grep -q "^oncall-llm resolve --repo $T/s-llm --instructions $T/s-llm/packaging/fork/oncall-instructions.md" "$T/s-llm.llm"
 check "  both sides' line in the file, no markers left" bash -c \
-  "grep -q example.com/upstream '$T/s-llm/crates/ui-egui/src/updates.rs' && ! grep -q '^<<<<<<<' '$T/s-llm/crates/ui-egui/src/updates.rs'"
+  "grep -q example.com/upstream '$T/s-llm/crates/ui-egui/src/platform/updates.rs' && ! grep -q '^<<<<<<<' '$T/s-llm/crates/ui-egui/src/platform/updates.rs'"
 check "  the merge commit has it" bash -c "git -C '$T/s-llm' log --merges --format=%s | grep -q 'Merge storytold/pdfcraft main'"
-check "  and the record says the LLM resolved it" grep -q "The on-call LLM resolved the merge conflicts in: \`crates/ui-egui/src/updates.rs\`" "$T/s-llm/docs/fork/releases/v$next.md"
+check "  and the record says the LLM resolved it" grep -q "The on-call LLM resolved the merge conflicts in: \`crates/ui-egui/src/platform/updates.rs\`" "$T/s-llm/docs/fork/releases/v$next.md"
 check "  then CI's checks ran through the LLM's fix loop" grep -q "^oncall-llm fix --repo $T/s-llm --check always=true .*--commit-prefix Sync fix" "$T/s-llm.llm"
 check "the LLM's server down: the code conflict stops the sync" stopped llmdown "conflicts that need a person"
 check "  after asking it" grep -q "^oncall-llm resolve" "$T/s-llmdown.llm"
