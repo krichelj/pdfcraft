@@ -138,8 +138,8 @@ pub struct Report {
     pub glyphs: usize,
     pub images_removed: usize,
     pub images_cleared: usize,
-    /// JBIG2 images, anywhere in the document, stored again as Flate without the `/JBIG2Globals`
-    /// they shared with a redacted image, so those globals leave the file.
+    /// JBIG2 images, anywhere in the document, stored again (as a cleared copy is) without the
+    /// `/JBIG2Globals` they shared with a redacted image, so those globals leave the file.
     pub images_restored: usize,
     pub paths_removed: usize,
     pub paths_clipped: usize,
@@ -551,10 +551,10 @@ const MAX_JBIG2_WALK: usize = 100_000;
 /// of marks drawn only under the area too. The image itself is replaced or removed, but the globals
 /// would stay for as long as another image uses them. So every image that uses the globals of a
 /// removed or replaced image (`doomed`), or of one drawn in a removed or replaced form, is decoded
-/// and stored again in place as Flate, without them, and a full save then leaves them out. An
-/// image that can't be stored again refuses the redaction (nothing changes, as `apply` works on a
-/// copy), but for a removed or replaced one, which is either unlinked or still drawn whole on
-/// another page. Returns how many images that weren't removed or replaced were stored again.
+/// and stored again in place without them, as a cleared copy is, and a full save then leaves them
+/// out. An image that can't be stored again refuses the redaction (nothing changes, as `apply`
+/// works on a copy), but for a removed or replaced one, which is either unlinked or still drawn
+/// whole on another page. Returns how many images that weren't removed or replaced were stored again.
 fn restore_shared_jbig2(doc: &mut Document, doomed: &[ObjRef]) -> Result<usize, RedactError> {
     let mut globals = HashSet::new();
     let mut seen = HashSet::new();
