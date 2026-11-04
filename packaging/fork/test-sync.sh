@@ -267,6 +267,15 @@ up deny commit -qam "upstream: a dependency policy change"
 # The fork adds an entry at the same place, so the two always conflict, whatever both files hold.
 sync deny "sed -i '/RUSTSEC-2024-0370/a\\    { id = \"RUSTSEC-2099-0002\", reason = \"fork test entry\" },' deny.toml && git commit -qam 'Fork: a deny entry'"
 
+# 5c. Upstream deletes a catalog the fork changed (they moved to storytold/craft-i18n): it goes.
+upstream catdel
+up catdel rm -q crates/ui-egui/src/i18n/ja.tsv
+awk 'function flush() { if (b !~ /path = "crates\/ui-egui\/src\/i18n\/ja.tsv"/) printf "%s", b; b = "" }
+  /^\[\[asset\]\]/ { flush() } { b = b $0 "\n" } END { flush() }' "$T/up-catdel/ATTRIBUTION.toml" >"$T/a2" && mv "$T/a2" "$T/up-catdel/ATTRIBUTION.toml"
+(cd "$T/up-catdel" && cargo xtask assets --write >/dev/null 2>&1)
+up catdel commit -qam "upstream: catalogs move out"
+sync catdel "printf '\\tA fork string\\tフォーク\\n' >>crates/ui-egui/src/i18n/ja.tsv && . packaging/fork/lib.sh && rehash_catalogs && git commit -qam 'Fork: a string'"
+
 # 6. Upstream edits a line of code the fork changed. With the on-call LLM it resolves the
 #    conflict; without it (SYNC_NO_LLM=1, or the server down) a person decides.
 code_change() {
@@ -406,6 +415,10 @@ check "  but not while a Sync upstream run is queued or running" bash -c "$(decl
   rwatch rel GH_BUSY=1 && grep -q '^gh run list' '$T/ghw/calls' && ! grep -q 'workflow run' '$T/ghw/calls'"
 check "  and calls nothing when the fork has upstream's newest release" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
   rwatch relold && [ ! -s '$T/ghw/calls' ]"
+check "a catalog upstream deleted and the fork changed is deleted" ok catdel
+check "  and gone from the tree" bash -c "[ ! -e '$T/s-catdel/crates/ui-egui/src/i18n/ja.tsv' ]"
+check "  assets still check out" assets_ok catdel
+check "re-hashing with no catalogs left changes nothing" bash -c "d=\$(mktemp -d -p '$T') && cd \"\$d\" && printf 'x\\n' >ATTRIBUTION.toml && bash -c 'set -euo pipefail; . \"\$1\"; rehash_catalogs; echo done' _ '$SRC/packaging/fork/lib.sh' | grep -qx done && [ \"\$(cat ATTRIBUTION.toml)\" = x ]"
 check "nothing new: does nothing" ok none
 check "  and says so" said none "nothing to do"
 check "an upstream change is merged" ok plain

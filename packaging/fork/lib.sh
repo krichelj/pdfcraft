@@ -324,6 +324,8 @@ keep_newer_locked() {
 rehash_catalogs() {
   local f h
   for f in crates/ui-egui/src/i18n/*.tsv; do
+    # None left (upstream moved them to storytold/craft-i18n): the glob stays unmatched.
+    [ -e "$f" ] || continue
     h=$(sha256sum "$f" | cut -d' ' -f1)
     # Only the catalog's own [[asset]] block: an entry without a sha256 line must not pass the
     # hash on to the next asset's (upstream 0.13.0's catalogs have such entries, and the hashes of
