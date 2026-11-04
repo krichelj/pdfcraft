@@ -186,6 +186,21 @@ mod tests {
     }
 
     #[test]
+    fn a_new_upstream_release_tag_is_synced_within_a_quarter_hour() {
+        let sync = file("sync-upstream.yml");
+        assert!(sync.contains("cron: \"*/15 * * * *\""), "the fork polls upstream's tags");
+        let watch = jobs(sync).into_iter().find(|(n, _)| n == "watch").expect("a watch job").1;
+        assert!(watch.contains("runs-on: [self-hosted, linux]"), "on the own runners");
+        assert!(watch.contains("tag=$(packaging/fork/upstream-release.sh)"));
+        assert!(watch.contains("github.event.schedule == '*/15 * * * *'"), "a poll without a new release syncs nothing");
+        let job = jobs(sync).into_iter().find(|(n, _)| n == "sync").expect("a sync job").1;
+        assert!(job.contains("needs: watch") && job.contains("if: needs.watch.outputs.run == 'true'"));
+        assert!(job.contains("SYNC_UPSTREAM_TAG: ${{ needs.watch.outputs.tag }}"), "the sync merges that tag");
+        let script = include_str!("../../packaging/fork/sync-upstream.sh");
+        assert!(script.contains("UPSTREAM_SRC=\"refs/tags/$SYNC_UPSTREAM_TAG\""));
+    }
+
+    #[test]
     fn the_sync_runs_on_the_primary_host_and_hands_what_a_merge_breaks_to_the_llm() {
         let sync = jobs(file("sync-upstream.yml")).into_iter().find(|(n, _)| n == "sync").expect("a sync job").1;
         assert!(sync.contains("runs-on: [self-hosted, linux, primary]"), "the primary host first, the other when it is down");

@@ -355,8 +355,40 @@ sync gmute "" STUB_LLM=mute
 sync gcomment "" STUB_LLM=comment
 sync gcatalog "" STUB_LLM=catalog SYNC_FIX_CHECKS="assets=cargo xtask assets"
 
+# 7. Upstream release tags (upstream-release.sh, then the sync with SYNC_UPSTREAM_TAG). Upstream
+#    releases 9.9.0 (an annotated tag), then commits past it and tags a pre-release: the watcher
+#    names v9.9.0 alone, and the sync merges that tag's commit, not main's newer one.
+upstream rel
+old=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' "$T/up-rel/Cargo.toml" | head -1)
+sed -i "s/\"$old\"/\"9.9.0\"/g" "$T/up-rel/Cargo.toml"
+up rel commit -qam "upstream: release 9.9.0"
+up rel tag -a v9.9.0 -m "PdfCraft 9.9.0"
+echo "after the release" >>"$T/up-rel/NOTICE"
+up rel commit -qam "upstream: past the release"
+up rel tag v10.0.0-rc1
+sync rel "" SYNC_UPSTREAM_TAG=v9.9.0
+# The fork already has upstream's newest release (its base, tagged): the watcher names nothing.
+upstream relold
+up relold tag v0.0.1
+echo "unreleased" >>"$T/up-relold/NOTICE"
+up relold commit -qam "upstream: unreleased"
+# A tag name that isn't a release is refused before anything is fetched.
+upstream relbad
+sync relbad "" SYNC_UPSTREAM_TAG="main"
+watch() { (cd "$T/fork" && SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$1" "$SRC/packaging/fork/upstream-release.sh" 2>/dev/null); }
+
 wait
 
+check "a new upstream release: the watcher names it" bash -c "[ \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch rel)\" = v9.9.0 ]"
+check "  the fork has upstream's newest release: the watcher names nothing" bash -c "[ -z \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch relold)\" ]"
+check "  no release tags at all: nothing" bash -c "[ -z \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch none)\" ]"
+check "  the sync merges the tag" ok rel
+check "  as <its version>-p1" version_is rel "9.9.0-p1"
+check "  the tag's commit, not main's newer one" bash -c "! grep -q 'after the release' '$T/s-rel/NOTICE'"
+check "  its record names the release and passes" bash -c "grep -q 'the release v9.9.0' '$T/s-rel/docs/fork/releases/v9.9.0-p1.md'" 
+check "  and passes" notes_ok rel "9.9.0-p1"
+check "  the merge commit names the tag" bash -c "git -C '$T/s-rel' log --merges -1 --format=%s | grep -q '^Merge storytold/pdfcraft v9.9.0 '"
+check "a tag that isn't a release is refused" stopped relbad "is not a release tag"
 check "nothing new: does nothing" ok none
 check "  and says so" said none "nothing to do"
 check "an upstream change is merged" ok plain
