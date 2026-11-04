@@ -20,6 +20,7 @@
 # Env: SYNC_DRY_RUN=1 stops before pushing; SYNC_CHECKS_TIMEOUT (seconds, default 7200);
 #      SYNC_NO_LLM=1 leaves conflicts and failing checks to a person; ONCALL_LLM, SYNC_LLM_ROUNDS,
 #      SYNC_CI_FIX_RETRIES and SYNC_FIX_CHECKS as lib.sh says;
+#      SYNC_UPSTREAM_TAG=vX.Y.Z merges that release tag instead of main (upstream-release.sh);
 #      SYNC_FORK_REF syncs from that commit instead of origin/main, and SYNC_UPSTREAM_URL from another
 #      repository's main instead of storytold/pdfcraft's (tests).
 set -euo pipefail
@@ -37,7 +38,15 @@ git config user.name >/dev/null || git config user.name "krichelj"
 git config user.email >/dev/null || git config user.email "krichelj@users.noreply.github.com"
 if [ -z "${SYNC_FORK_REF:-}" ]; then git fetch --quiet origin main; fi
 git checkout --quiet -B sync-base "${SYNC_FORK_REF:-origin/main}"
-git fetch --quiet "$UPSTREAM_URL" "+refs/heads/main:$UPSTREAM_REF"
+# SYNC_UPSTREAM_TAG: that release tag (upstream-release.sh names it), peeled to its commit; else main.
+if [ -n "${SYNC_UPSTREAM_TAG:-}" ]; then
+  case "$SYNC_UPSTREAM_TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) die "SYNC_UPSTREAM_TAG=$SYNC_UPSTREAM_TAG is not a release tag (vX.Y.Z)" ;; esac
+  UPSTREAM_SRC="refs/tags/$SYNC_UPSTREAM_TAG" UPSTREAM_NAME="$SYNC_UPSTREAM_TAG"
+else
+  UPSTREAM_SRC=refs/heads/main UPSTREAM_NAME=main
+fi
+git fetch --quiet --no-tags "$UPSTREAM_URL" "+$UPSTREAM_SRC:$UPSTREAM_REF"
+git update-ref "$UPSTREAM_REF" "$(git rev-parse "$UPSTREAM_REF^{commit}")"
 new=$(git rev-list --count HEAD.."$UPSTREAM_REF")
 if [ "$new" = 0 ]; then
   echo "sync: the fork has every storytold/pdfcraft commit; nothing to do"
@@ -45,7 +54,7 @@ if [ "$new" = 0 ]; then
 fi
 up=$(git rev-parse "$UPSTREAM_REF")
 branch="sync/upstream-${up:0:12}"
-echo "sync: $new new upstream commits, up to ${up:0:12}; branch $branch"
+echo "sync: $new new upstream commits, up to $UPSTREAM_NAME (${up:0:12}); branch $branch"
 
 pr=$(gh pr list --repo "$REPO" --head "$branch" --state open --json number --jq '.[0].number // empty')
 stale=""
@@ -73,7 +82,7 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
   took_deny=""
   llm_resolved=""
   RUNNER_TMP="$(mktemp -d)"
-  if ! git merge --no-edit --no-ff -m "Merge storytold/pdfcraft main (${up:0:12})" "$UPSTREAM_REF" >/dev/null 2>&1; then
+  if ! git merge --no-edit --no-ff -m "Merge storytold/pdfcraft $UPSTREAM_NAME (${up:0:12})" "$UPSTREAM_REF" >/dev/null 2>&1; then
     for f in $(git diff --name-only --diff-filter=U); do
       case "$f" in
         Cargo.toml | Cargo.lock) git checkout --theirs -- "$f" && git add "$f" ;;
@@ -133,7 +142,7 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
 
 $files
 
-To resolve: \`git fetch https://github.com/storytold/pdfcraft main && git checkout -b $branch origin/main && git merge FETCH_HEAD\`, resolve and commit these files, push \`$branch\` and open a PR into main. The next sync run merges it once every check is green."
+To resolve: \`git fetch https://github.com/storytold/pdfcraft $UPSTREAM_SRC && git checkout -b $branch origin/main && git merge FETCH_HEAD\`, resolve and commit these files, push \`$branch\` and open a PR into main. The next sync run merges it once every check is green."
       die "upstream merge conflicts that need a person: $(echo "$left" | tr '\n' ' ')"
     fi
     git -c core.editor=true commit --quiet --no-edit
@@ -218,7 +227,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   count=$(git rev-list --no-merges --count "$UPSTREAM_REF" --not sync-base)
   summary="$(mktemp)"
   {
-    echo "- Brings in $count upstream storytold/pdfcraft commits, up to [\`${up:0:12}\`](https://github.com/storytold/pdfcraft/commit/$up):"
+    echo "- Brings in $count upstream storytold/pdfcraft commits, up to [\`${up:0:12}\`](https://github.com/storytold/pdfcraft/commit/$up)${SYNC_UPSTREAM_TAG:+, the release $SYNC_UPSTREAM_TAG}:"
     # -n, not `| head`: under pipefail, head leaving early kills git log with SIGPIPE (exit 141).
     git log --no-merges -n 40 --format='%s' "$UPSTREAM_REF" --not sync-base | sed -e 's/^/  - /' -e 's/TODO/to-do/g'
     if [ "$count" -gt 40 ]; then echo "  - and $((count - 40)) more"; fi
@@ -247,7 +256,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     echo "sync: dry run; stopping before the push (branch $branch, version $version)"
     exit 0
   fi
-  title="Sync upstream: storytold/pdfcraft@${up:0:12} (PdfCraft $version)"
+  title="Sync upstream: storytold/pdfcraft $UPSTREAM_NAME@${up:0:12} (PdfCraft $version)"
   if [ -n "$stale" ]; then
     force_push_as_owner "$branch" "$pr_head"
     # The REST API: `gh pr edit` reads the PR's classic project cards, which GitHub now refuses.

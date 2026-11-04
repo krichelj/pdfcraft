@@ -14,6 +14,10 @@ on:
     # Daily (the owner's choice): a new upstream release reaches the fork as <its version>-p1 by
     # the next morning. Run it by hand (workflow_dispatch) to take one sooner.
     - cron: "0 6 * * *"
+    # Every 15 minutes: a new upstream release tag (vX.Y.Z) the fork lacks is merged as soon as
+    # it appears (packaging/fork/upstream-release.sh), as <its version>-p1. GitHub can't start a
+    # fork's workflow from another repository's tag, so the fork polls.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -24,8 +28,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Which upstream commit to merge: the newest release tag the fork lacks, or main on the daily run
+  # and on demand. A poll that finds no new release ends here.
+  watch:
+    name: watch upstream releases
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      run: ${{ steps.release.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Newest upstream release the fork lacks
+        id: release
+        env:
+          POLL: ${{ github.event.schedule == '*/15 * * * *' }}
+        run: |
+          tag=$(packaging/fork/upstream-release.sh)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -n "$tag" ] || [ "$POLL" != true ]; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
+
   sync:
     name: sync upstream
+    needs: watch
+    if: needs.watch.outputs.run == 'true'
     # `primary` (own-ci-runners): the primary runner host takes it at once, the other only when the
     # primary hasn't within the takeover delay, so a host that is down never stalls the sync.
     runs-on: [self-hosted, linux, primary]
@@ -65,7 +94,9 @@ jobs:
       - name: Merge without the on-call LLM
         run: echo "SYNC_NO_LLM=1" >> "$GITHUB_ENV"
 
-      - name: Sync storytold/pdfcraft main
+      - name: Sync storytold/pdfcraft (a new release, else main)
+        env:
+          SYNC_UPSTREAM_TAG: ${{ needs.watch.outputs.tag }}
         run: packaging/fork/sync-upstream.sh
       # The gate on the fork's version line: main's version must be built on upstream's latest
       # release (<X.Y.Z>-p<N>, X.Y.Z no older). The sync above adds a new release; this proves it.
