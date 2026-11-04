@@ -389,6 +389,23 @@ check "  its record names the release and passes" bash -c "grep -q 'the release 
 check "  and passes" notes_ok rel "9.9.0-p1"
 check "  the merge commit names the tag" bash -c "git -C '$T/s-rel' log --merges -1 --format=%s | grep -q '^Merge storytold/pdfcraft v9.9.0 '"
 check "a tag that isn't a release is refused" stopped relbad "is not a release tag"
+# 7b. The host's release watcher (release-watch.sh): it starts Sync upstream for a new release,
+#     unless a run is already queued or running, and calls nothing when there is no new release.
+mkdir -p "$T/ghw"
+# shellcheck disable=SC2016 # the stand-in's own $1 $2 $*, written as they are
+printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/ghw/calls"\ncase "$1 $2" in "run list") echo "${GH_BUSY:-0}" ;; esac\n' "$T" >"$T/ghw/gh"
+chmod +x "$T/ghw/gh"
+rwatch() {
+  : >"$T/ghw/calls"
+  (cd "$T/fork" && env PATH="$T/ghw:$PATH" RELEASE_WATCH_DIR="$T/fork" SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$1" "${@:2}" \
+    bash "$SRC/packaging/fork/release-watch.sh" >/dev/null 2>&1)
+}
+check "the host watcher starts Sync upstream for a new release" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
+  rwatch rel && grep -q '^gh workflow run sync-upstream.yml --repo krichelj/pdfcraft --ref main$' '$T/ghw/calls'"
+check "  but not while a Sync upstream run is queued or running" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
+  rwatch rel GH_BUSY=1 && grep -q '^gh run list' '$T/ghw/calls' && ! grep -q 'workflow run' '$T/ghw/calls'"
+check "  and calls nothing when the fork has upstream's newest release" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
+  rwatch relold && [ ! -s '$T/ghw/calls' ]"
 check "nothing new: does nothing" ok none
 check "  and says so" said none "nothing to do"
 check "an upstream change is merged" ok plain
