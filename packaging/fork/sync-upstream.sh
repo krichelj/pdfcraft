@@ -95,7 +95,12 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
           ;;
         # A catalog is one string per line: both sides' new lines are kept (a duplicate key fails
         # the i18n tests in the PR's CI, which then stays open for a person).
+        # A catalog one side deleted (upstream moved them to storytold/craft-i18n) goes.
         crates/ui-egui/src/i18n/*.tsv)
+          if ! git cat-file -e ":2:$f" 2>/dev/null || ! git cat-file -e ":3:$f" 2>/dev/null; then
+            git rm --quiet -f -- "$f"
+            continue
+          fi
           git show ":2:$f" >"$f.ours" && git show ":1:$f" >"$f.base" && git show ":3:$f" >"$f.theirs"
           git merge-file --union -p "$f.ours" "$f.base" "$f.theirs" >"$f"
           rm -f "$f.ours" "$f.base" "$f.theirs"
