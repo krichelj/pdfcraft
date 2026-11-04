@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The reliable trigger for syncing a new storytold/pdfcraft release: GitHub starts this repo's
 # scheduled workflows hours late (the 06:00 sync has started at 13:38), so a timer on the runner
-# host runs this every 5 minutes. When upstream has a vX.Y.Z tag the fork lacks
+# host runs this every hour. When upstream has a vX.Y.Z tag the fork lacks
 # (upstream-release.sh) and no Sync upstream run is queued or running, it starts one; that run
 # merges the tag. The workflow's own 15-minute schedule stays as the fallback.
 #
@@ -31,11 +31,11 @@ Environment=PATH=$PATH
 UNIT
   cat >"$units/pdfcraft-release-watch.timer" <<UNIT
 [Unit]
-Description=PdfCraft fork: check for a new upstream release every 5 minutes
+Description=PdfCraft fork: check for a new upstream release every hour
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=5min
+OnUnitActiveSec=1h
 
 [Install]
 WantedBy=timers.target
