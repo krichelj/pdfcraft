@@ -68,6 +68,17 @@ jobs:
           ref: b076417b5880bd4154bd22f00695b1d28c6bea83
           path: craft-fonts
 
+      # The craft-i18n build input (the interface translations), at the commit in craft-i18n.rev:
+      # PdfCraft keeps no catalogs since 0.18.1 (AGENTS.md).
+      - name: craft-i18n revision
+        id: i18n
+        run: echo "rev=$(tr -d '[:space:]' < craft-i18n.rev)" >> "$GITHUB_OUTPUT"
+      - name: Check out craft-i18n
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ steps.i18n.outputs.rev }}
+          path: craft-i18n
       # own-ci-runners: jobs never sudo; the owner installs host packages, the job checks them.
       # qpdf and poppler-utils are the independent oracles (crates/oracle).
       - name: Check Linux system dependencies (egui/winit/rfd) and the oracles
@@ -102,6 +113,8 @@ jobs:
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
+          CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n
+          CRAFT_I18N_REQUIRED: "1"
         run: |
           cargo nextest --version >/dev/null 2>&1 \
             || { echo "::error::cargo-nextest missing on the runner: see own-ci-runners"; exit 1; }

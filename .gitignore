@@ -10,3 +10,5 @@ plan/
 # A craft-fonts checkout used as the optional CRAFT_FONTS_DIR build input (CI and releases put it here).
 /craft-fonts
 .claude/
+# A craft-i18n checkout used as the CRAFT_I18N_DIR build input (CI and releases put it here).
+/craft-i18n

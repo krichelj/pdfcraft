@@ -178,6 +178,11 @@ version_is() { grep -q "^version = \"$2\"" "$T/s-$1/Cargo.toml"; }
 notes_ok() { (cd "$T/s-$1" && cargo xtask fork-notes check "$2" --commit HEAD --upstream refs/fork-notes/upstream >/dev/null 2>&1); }
 assets_ok() { (cd "$T/s-$1" && cargo xtask assets >/dev/null 2>&1); }
 
+# The fork's own translation catalogs, until upstream 0.18.1 moved them to storytold/craft-i18n:
+# the catalog cases need one to change, and are skipped (and said so) without.
+catalogs=""
+if [ -e "$T/fork/crates/ui-egui/src/i18n/ja.tsv" ]; then catalogs=1; else echo "fork automation: no translation catalogs in the tree; their merge cases are skipped"; fi
+
 # Every sync case is set up and started first; they run side by side, then are checked.
 # 1. Nothing new upstream.
 upstream none
@@ -251,6 +256,7 @@ sed -i "s/\"$old\"/\"9.9.0\"/g" "$T/up-bump/Cargo.toml"
 up bump commit -qam "upstream: release 9.9.0"
 sync bump
 
+if [ -n "$catalogs" ]; then
 # 5. Upstream adds to a translation catalog the fork also changed: the hash lines conflict.
 upstream cat
 printf '\tAn upstream string\tアップストリームの文字列\n' >>"$T/up-cat/crates/ui-egui/src/i18n/ja.tsv"
@@ -259,6 +265,7 @@ awk -v h="$h" '/^\[\[asset\]\]/ { w = 0 } $0 == "path = \"crates/ui-egui/src/i18
   "$T/up-cat/ATTRIBUTION.toml" >"$T/a" && mv "$T/a" "$T/up-cat/ATTRIBUTION.toml"
 up cat commit -qam "upstream: a new string"
 sync cat
+fi
 
 # 5b. Upstream adds to deny.toml where the fork did: upstream's policy is taken if the tree passes it.
 upstream deny
@@ -267,6 +274,7 @@ up deny commit -qam "upstream: a dependency policy change"
 # The fork adds an entry at the same place, so the two always conflict, whatever both files hold.
 sync deny "sed -i '/RUSTSEC-2024-0370/a\\    { id = \"RUSTSEC-2099-0002\", reason = \"fork test entry\" },' deny.toml && git commit -qam 'Fork: a deny entry'"
 
+if [ -n "$catalogs" ]; then
 # 5c. Upstream deletes a catalog the fork changed (they moved to storytold/craft-i18n): it goes.
 upstream catdel
 up catdel rm -q crates/ui-egui/src/i18n/ja.tsv
@@ -275,6 +283,7 @@ awk 'function flush() { if (b !~ /path = "crates\/ui-egui\/src\/i18n\/ja.tsv"/) 
 (cd "$T/up-catdel" && cargo xtask assets --write >/dev/null 2>&1)
 up catdel commit -qam "upstream: catalogs move out"
 sync catdel "printf '\\tA fork string\\tフォーク\\n' >>crates/ui-egui/src/i18n/ja.tsv && . packaging/fork/lib.sh && rehash_catalogs && git commit -qam 'Fork: a string'"
+fi
 
 # 6. Upstream edits a line of code the fork changed. With the on-call LLM it resolves the
 #    conflict; without it (SYNC_NO_LLM=1, or the server down) a person decides.
@@ -362,7 +371,7 @@ sync gprotected "" STUB_LLM=protected
 sync gignore "" STUB_LLM=ignore
 sync gmute "" STUB_LLM=mute
 sync gcomment "" STUB_LLM=comment
-sync gcatalog "" STUB_LLM=catalog SYNC_FIX_CHECKS="assets=cargo xtask assets"
+[ -z "$catalogs" ] || sync gcatalog "" STUB_LLM=catalog SYNC_FIX_CHECKS="assets=cargo xtask assets"
 
 # 7. Upstream release tags (upstream-release.sh, then the sync with SYNC_UPSTREAM_TAG). Upstream
 #    releases 9.9.0 (an annotated tag), then commits past it and tags a pre-release: the watcher
@@ -415,9 +424,11 @@ check "  but not while a Sync upstream run is queued or running" bash -c "$(decl
   rwatch rel GH_BUSY=1 && grep -q '^gh run list' '$T/ghw/calls' && ! grep -q 'workflow run' '$T/ghw/calls'"
 check "  and calls nothing when the fork has upstream's newest release" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
   rwatch relold && [ ! -s '$T/ghw/calls' ]"
+if [ -n "$catalogs" ]; then
 check "a catalog upstream deleted and the fork changed is deleted" ok catdel
 check "  and gone from the tree" bash -c "[ ! -e '$T/s-catdel/crates/ui-egui/src/i18n/ja.tsv' ]"
 check "  assets still check out" assets_ok catdel
+fi
 check "re-hashing with no catalogs left changes nothing" bash -c "d=\$(mktemp -d -p '$T') && cd \"\$d\" && printf 'x\\n' >ATTRIBUTION.toml && bash -c 'set -euo pipefail; . \"\$1\"; rehash_catalogs; echo done' _ '$SRC/packaging/fork/lib.sh' | grep -qx done && [ \"\$(cat ATTRIBUTION.toml)\" = x ]"
 check "nothing new: does nothing" ok none
 check "  and says so" said none "nothing to do"
@@ -444,10 +455,12 @@ check "  the fork's workflows stay" in_tree wf .github/workflows/sync-upstream.y
 check "an upstream version bump: merged" ok bump
 check "  the fork version restarts at 9.9.0-p1" version_is bump "9.9.0-p1"
 check "  and its record passes" notes_ok bump "9.9.0-p1"
+if [ -n "$catalogs" ]; then
 check "catalog hash conflict: merged" ok cat
 check "  with upstream's string" grep -q "An upstream string" "$T/s-cat/crates/ui-egui/src/i18n/ja.tsv"
 check "  and the fork's strings" grep -q "Install and relaunch" "$T/s-cat/crates/ui-egui/src/i18n/ja.tsv"
 check "  and every hash right" assets_ok cat
+fi
 check "deny.toml conflict: merged" ok deny
 check "  with upstream's entry" grep -q "RUSTSEC-2099-0001" "$T/s-deny/deny.toml"
 check "  and the fork's entry is kept or upstream's policy passes alone" grep -q "RUSTSEC-2026-0371" "$T/s-deny/deny.toml"
@@ -543,9 +556,11 @@ check "the LLM's fix commenting a line out stops the sync" stopped gcomment "dis
 check "  naming the line" said gcomment "###CLI_ZIP="
 # Before upstream 0.13.0 a catalog's hash went stale and the assets check's mechanical fix re-hashed it;
 # from 0.13.0 catalogs carry no hash. Either way the edit must leave every asset checking out.
+if [ -n "$catalogs" ]; then
 check "the LLM's catalog edit leaves the assets checking out, and the sync goes on" ok gcatalog
 check "  with the LLM's string" grep -q "A string the LLM added" "$T/s-gcatalog/crates/ui-egui/src/i18n/ja.tsv"
 check "  every hash right" assets_ok gcatalog
+fi
 check "an upstream edit of the fork's own workflow: merged" ok ownwf
 check "  keeping the fork's version" bash -c "grep -q '^name: CI$' '$T/s-ownwf/.github/workflows/ci.yml' && ! grep -q ubuntu-latest '$T/s-ownwf/.github/workflows/ci.yml'"
 check "  and the record says so" grep -q "upstream's changes to ci.yml were not taken" "$T/s-ownwf/docs/fork/releases/v$next.md"
