@@ -144,6 +144,17 @@ jobs:
           repository: storytold/craft-fonts
           ref: b076417b5880bd4154bd22f00695b1d28c6bea83
           path: craft-fonts
+      # The craft-i18n build input (the interface translations), at the commit in craft-i18n.rev:
+      # PdfCraft keeps no catalogs since 0.18.1 (AGENTS.md).
+      - name: craft-i18n revision
+        id: i18n
+        run: echo "rev=$(tr -d '[:space:]' < craft-i18n.rev)" >> "$GITHUB_OUTPUT"
+      - name: Check out craft-i18n
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ steps.i18n.outputs.rev }}
+          path: craft-i18n
       # No dtolnay/rust-toolchain or rust-cache here: both write the user's real ~/.cargo, and a
       # concurrent job's rustup reinstall deleted the toolchain under a running build (run
       # 37862986363: CurrentDirUnlinked, then `cargo: command not found`). The hosts carry stable
@@ -160,6 +171,8 @@ jobs:
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CRAFT_FONTS_REQUIRED: "1"
+          CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n
+          CRAFT_I18N_REQUIRED: "1"
         # A build directory that persists on the runner host, so a release rebuilds only what changed.
         run: CARGO_TARGET_DIR="$HOME/.cache/ci-target/pdfcraft-release-macos" packaging/macos/cross-package.sh
       - uses: actions/upload-artifact@v4
