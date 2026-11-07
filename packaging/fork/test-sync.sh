@@ -311,6 +311,24 @@ mkdir -p "$T/ghnoissue"
 printf '#!/usr/bin/env bash\ncase "$1" in issue) echo "the repository has disabled issues" >&2; exit 1 ;; esac\n' >"$T/ghnoissue/gh"
 chmod +x "$T/ghnoissue/gh"
 sync codenoissue "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghnoissue:$PATH"
+# The hourly runs after the first stop on the same conflict: a stand-in gh that keeps what was
+# commented on issue #5 and shows it back. The second run finds its own ask there and only warns.
+code_change quiet
+mkdir -p "$T/ghquiet"
+cat >"$T/ghquiet/gh" <<EOF
+#!/usr/bin/env bash
+echo "gh \$1 \$2" >>"$T/ghquiet/calls"
+case "\$1 \$2" in
+  "issue list") echo 5 ;;
+  "issue view") cat "$T/ghquiet/said" 2>/dev/null ;;
+  "issue comment") while [ \$# -gt 0 ]; do [ "\$1" != --body ] || printf '%s\n' "\$2" >>"$T/ghquiet/said"; shift; done ;;
+esac
+EOF
+chmod +x "$T/ghquiet/gh"
+sync quiet "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghquiet:$PATH"
+wait $!
+ln -s "$T/up-quiet" "$T/up-quietagain"
+sync quietagain "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghquiet:$PATH" GITHUB_ENV="$T/quiet.env"
 code_change llm
 sync llm
 code_change llmdown
@@ -476,6 +494,11 @@ check "  before anything is pushed" bash -c "! grep -q 'git-credential\\|stoppin
 check "  with issues disabled, it still names the conflict" stopped codenoissue "conflicts that need a person: crates/ui-egui/src/platform/updates.rs"
 check "  and warns that it couldn't open the issue" said codenoissue "couldn't open an issue to ask a person"
 check "  and once per sync branch: an open issue gets a comment" grep -q "^gh issue comment 5 " "$T/ghissue/calls"
+check "  that comment fails the run when the issue doesn't say it yet" stopped quiet "conflicts that need a person"
+check "  a later run stopped on the same ask ends cleanly" ok quietagain
+check "    warning that it still waits" said quietagain "still waiting for a person on issue #5: upstream merge conflicts"
+check "    adding no second comment" bash -c "[ \"\$(grep -c '^gh issue comment' '$T/ghquiet/calls')\" = 1 ]"
+check "    and telling the workflow to skip the version gate" grep -qx SYNC_WAITING=1 "$T/quiet.env"
 check "a code conflict is resolved by the on-call LLM and merged" ok llm
 check "  which got the conflicted repo and the fork's merge rules" \
   grep -q "^oncall-llm resolve --repo $T/s-llm --instructions $T/s-llm/packaging/fork/oncall-instructions.md" "$T/s-llm.llm"
