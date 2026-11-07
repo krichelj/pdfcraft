@@ -109,6 +109,11 @@ jobs:
       # them one after another, which left all but ~5 of the host's cores idle (83 s against 28 s
       # locally). nextest skips doctests, so those run on their own. The host provides
       # cargo-nextest (own-ci-runners); xtask's workflow test keeps this step parallel.
+      # The OCR models (ATTRIBUTION.toml, SHA-256 pinned) into assets/models/: the runner hosts
+      # have Tesseract, so the OCR tests count recognition as available and need the default
+      # engine's models too.
+      - name: Fetch the OCR models
+        run: cargo xtask models
       - name: Test (with craft-fonts)
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
