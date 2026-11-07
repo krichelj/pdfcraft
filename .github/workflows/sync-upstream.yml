@@ -100,7 +100,10 @@ jobs:
         run: packaging/fork/sync-upstream.sh
       # The gate on the fork's version line: main's version must be built on upstream's latest
       # release (<X.Y.Z>-p<N>, X.Y.Z no older). The sync above adds a new release; this proves it.
+      # Not while the sync waits on an issue the owner already has (SYNC_WAITING, lib.sh's
+      # stop_for_person): main is behind by design then, and the issue is the reminder.
       - name: Fork version is on top of upstream's latest release
+        if: env.SYNC_WAITING != '1'
         run: |
           git fetch --quiet origin main
           git checkout --quiet origin/main
