@@ -144,6 +144,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aho-corasick"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "aligned-vec"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -229,7 +238,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1304,6 +1313,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-web-host"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=2e2312ddaf21bc3d85cd3395d0955c7d239306f6#2e2312ddaf21bc3d85cd3395d0955c7d239306f6"
+dependencies = [
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "craft-winprint-gdi"
 version = "0.1.0"
 source = "git+https://github.com/storytold/winprint.rs?rev=417ac3c4d14d3da5485a99c7d5ce8f05664ec312#417ac3c4d14d3da5485a99c7d5ce8f05664ec312"
@@ -1374,9 +1392,9 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crypto-bigint"
-version = "0.7.8"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d726facc8b27e604391b232b970cdc19b5468c69f08b466b9734c759216c7415"
+checksum = "6bb08299a6046833a879ace115697f12fd2bd6c8d3e93c909ffc9e0738e7cae0"
 dependencies = [
  "cpubits",
  "ctutils",
@@ -2017,7 +2035,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4117,7 +4135,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4208,7 +4226,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "chrono",
  "craft-update",
@@ -4220,10 +4238,8 @@ dependencies = [
  "pdfcraft-ui-egui",
  "pollster 1.0.1",
  "raw-window-handle",
- "rustls-native-certs",
  "serde_json",
  "uds_windows",
- "ureq",
  "wayland-client",
  "wayland-protocols",
  "windows",
@@ -4234,7 +4250,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-a11y"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4246,7 +4262,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-annot"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "hayro-syntax",
  "pdfcraft-cos",
@@ -4257,7 +4273,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-audit"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4268,7 +4284,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-automation"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "base64 0.23.1",
  "flate2",
@@ -4279,6 +4295,8 @@ dependencies = [
  "pdfcraft-model",
  "pdfcraft-organize",
  "pdfcraft-platform",
+ "pdfcraft-prc",
+ "pdfcraft-prc-render",
  "pdfcraft-render",
  "pdfcraft-xfa",
  "png 0.18.1",
@@ -4290,7 +4308,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-cli"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "base64 0.23.1",
  "pdfcraft-audit",
@@ -4308,11 +4326,11 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-compare"
-version = "0.18.1-p5"
+version = "0.19.0"
 
 [[package]]
 name = "pdfcraft-content"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "hayro-syntax",
  "pdfcraft-cos",
@@ -4320,10 +4338,11 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-cos"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "chrono",
  "hayro-syntax",
+ "js-sys",
  "pdfcraft-crypt",
  "pdfcraft-filters",
  "pdfcraft-oracle",
@@ -4331,11 +4350,12 @@ dependencies = [
  "proptest",
  "serde_json",
  "thiserror 2.0.21",
+ "wasm-bindgen",
 ]
 
 [[package]]
 name = "pdfcraft-create"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "encoding_rs",
  "hayro-ccitt",
@@ -4354,7 +4374,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-crypt"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "aes",
  "md-5",
@@ -4366,7 +4386,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-edit"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "hayro-syntax",
  "kurbo 0.13.1",
@@ -4384,7 +4404,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-engine"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "chrono",
  "craft-docpath",
@@ -4428,14 +4448,14 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-export"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "flate2",
 ]
 
 [[package]]
 name = "pdfcraft-filters"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "fax",
  "flate2",
@@ -4448,7 +4468,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-fonts"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "harfrust",
  "pdfcraft-cos",
@@ -4458,7 +4478,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-forms"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "hayro-syntax",
  "pdfcraft-content",
@@ -4471,11 +4491,11 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-geom"
-version = "0.18.1-p5"
+version = "0.19.0"
 
 [[package]]
 name = "pdfcraft-js"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "boa_engine",
  "chrono",
@@ -4483,7 +4503,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-measure"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-content",
@@ -4496,17 +4516,18 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-model"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "pdfcraft-cos",
 ]
 
 [[package]]
 name = "pdfcraft-ocr"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "ocrs",
  "pdfcraft-fonts",
+ "png 0.18.1",
  "rten",
  "tempfile",
  "thiserror 2.0.21",
@@ -4514,7 +4535,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-optimize"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "image",
  "pdfcraft-annot",
@@ -4530,11 +4551,11 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-oracle"
-version = "0.18.1-p5"
+version = "0.19.0"
 
 [[package]]
 name = "pdfcraft-organize"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "hayro-syntax",
  "pdfcraft-content",
@@ -4545,7 +4566,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-platform"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "async-channel",
  "futures-lite",
@@ -4554,8 +4575,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdfcraft-prc"
+version = "0.19.0"
+dependencies = [
+ "flate2",
+ "proptest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "pdfcraft-prc-render"
+version = "0.19.0"
+dependencies = [
+ "flate2",
+ "pdfcraft-prc",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "pdfcraft-preflight"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "flate2",
  "pdfcraft-content",
@@ -4566,7 +4605,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-print"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "craft-print",
  "pdfcraft-content",
@@ -4578,8 +4617,9 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-redact"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
+ "aho-corasick",
  "pdfcraft-annot",
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4588,14 +4628,16 @@ dependencies = [
  "pdfcraft-fonts",
  "pdfcraft-forms",
  "pdfcraft-model",
+ "pdfcraft-render",
  "pdfcraft-testkit",
  "pdfcraft-xfa",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "pdfcraft-render"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "bytemuck",
  "flate2",
@@ -4614,7 +4656,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-sign"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "aes",
  "aws-lc-rs",
@@ -4650,11 +4692,11 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-testkit"
-version = "0.18.1-p5"
+version = "0.19.0"
 
 [[package]]
 name = "pdfcraft-ui-egui"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "arboard",
  "base64 0.23.1",
@@ -4684,6 +4726,7 @@ dependencies = [
  "pdfcraft-engine",
  "pdfcraft-fonts",
  "pdfcraft-model",
+ "pdfcraft-ocr",
  "pdfcraft-platform",
  "pdfcraft-render",
  "pdfcraft-xfa",
@@ -4709,8 +4752,9 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-web"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
+ "craft-web-host",
  "eframe",
  "egui",
  "js-sys",
@@ -4721,7 +4765,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-xfa"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "base64 0.23.1",
  "image",
@@ -4735,7 +4779,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-xfdf"
-version = "0.18.1-p5"
+version = "0.19.0"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-cos",
@@ -5280,7 +5324,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5817,7 +5861,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5887,7 +5931,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6774,10 +6818,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6948,9 +6992,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.54.1"
+version = "1.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
+checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
  "bytes",
  "libc",
@@ -7888,7 +7932,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
