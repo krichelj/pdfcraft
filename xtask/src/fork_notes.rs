@@ -10,7 +10,8 @@
 //! runs `pending` on every change, which checks the record of a version not released yet.
 //!
 //! Options: `--commit REV` (default HEAD), `--upstream REV` (default: storytold/pdfcraft's main,
-//! fetched into `refs/fork-notes/upstream`).
+//! fetched into `refs/fork-notes/upstream`, or its `release` branch, where upstream tags its
+//! releases since 0.18.2, when the commit is built on that: [`pick_upstream`]).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,6 +22,7 @@ use crate::version;
 
 const UPSTREAM_URL: &str = "https://github.com/storytold/pdfcraft.git";
 const UPSTREAM_REF: &str = "refs/fork-notes/upstream";
+const UPSTREAM_RELEASE_REF: &str = "refs/fork-notes/upstream-release";
 const UPSTREAM_WEB: &str = "https://github.com/storytold/pdfcraft";
 const FORK_WEB: &str = "https://github.com/krichelj/pdfcraft";
 const START: &str = "<!-- fork-notes:generated:start (cargo xtask fork-notes generate; do not edit by hand) -->";
@@ -80,7 +82,11 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
             None => {
                 git(&repo, &["fetch", "--quiet", UPSTREAM_URL, &format!("+refs/heads/main:{UPSTREAM_REF}")])
                     .context("fetching storytold/pdfcraft main")?;
-                Ok(UPSTREAM_REF.into())
+                let mut lines = vec![UPSTREAM_REF];
+                if git(&repo, &["fetch", "--quiet", UPSTREAM_URL, &format!("+refs/heads/release:{UPSTREAM_RELEASE_REF}")]).is_ok() {
+                    lines.push(UPSTREAM_RELEASE_REF);
+                }
+                pick_upstream(&repo, &commit, &lines)
             }
         }
     };
@@ -160,6 +166,25 @@ fn git(repo: &Path, args: &[&str]) -> anyhow::Result<String> {
 
 fn short(sha: &str) -> &str {
     sha.get(..12).unwrap_or(sha)
+}
+
+/// Which of upstream's `lines` (main first, then the release branch) `commit` is built on: the one
+/// whose last commit shared with `commit` is the newest. Lines that diverged keep the earlier one,
+/// main, as the sync that merged main after a release wrote that record.
+pub fn pick_upstream(repo: &Path, commit: &str, lines: &[&str]) -> anyhow::Result<String> {
+    let mut best: Option<(&str, String)> = None;
+    for line in lines {
+        let Ok(base) = git(repo, &["merge-base", commit, line]) else { continue };
+        let base = base.trim().to_string();
+        let newer = match &best {
+            None => true,
+            Some((_, b)) => *b != base && git(repo, &["merge-base", "--is-ancestor", b, &base]).is_ok(),
+        };
+        if newer {
+            best = Some((line, base));
+        }
+    }
+    best.map(|(line, _)| line.to_string()).context("the release shares no history with upstream")
 }
 
 /// Read the facts for release `version` at `commit` from git.
@@ -389,6 +414,29 @@ mod tests {
         let first = collect(&r.0, "0.1.0-p1", "v0.1.0-p1", "upstream").unwrap();
         assert_eq!(first.previous, None);
         assert_ne!(first.upstream_base, d.upstream_base, "p1 came before the later upstream merge");
+    }
+
+    #[test]
+    fn a_release_tagged_off_upstream_main_is_judged_against_upstream_release_branch() {
+        let r = repo("release-line");
+        assert_eq!(pick_upstream(&r.0, "HEAD", &["upstream", "release"]).unwrap(), "upstream", "no release branch: main");
+        // Upstream cuts 0.2.0 on its release branch, which main never gets; the fork merges the tag.
+        r.git(&["checkout", "-q", "-b", "release", "upstream"]);
+        r.commit("Cargo.toml", "[workspace.package]\nversion = \"0.2.0\"\n", "upstream: Release 0.2.0");
+        r.git(&["checkout", "-q", "main"]);
+        // As the sync does, upstream's Cargo.toml on the version conflict.
+        r.git(&["merge", "-q", "--no-edit", "-X", "theirs", "release"]);
+        let line = pick_upstream(&r.0, "HEAD", &["upstream", "release"]).unwrap();
+        assert_eq!(line, "release");
+        let d = collect(&r.0, "0.2.0-p1", "HEAD", &line).unwrap();
+        assert_eq!((d.upstream_base.as_str(), d.upstream_version.as_str()), (r.git(&["rev-parse", "release"]).trim(), "0.2.0"));
+        // Then the fork merges newer upstream main, which the release branch doesn't have: main again.
+        r.git(&["checkout", "-q", "upstream"]);
+        r.commit("up.rs", "after", "upstream: work after the release");
+        r.git(&["checkout", "-q", "main"]);
+        r.git(&["merge", "-q", "--no-edit", "upstream"]);
+        assert_eq!(pick_upstream(&r.0, "HEAD", &["upstream", "release"]).unwrap(), "upstream");
+        assert_eq!(pick_upstream(&r.0, "HEAD", &["missing", "upstream"]).unwrap(), "upstream", "a line that isn't there is passed over");
     }
 
     #[test]

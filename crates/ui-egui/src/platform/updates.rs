@@ -179,9 +179,10 @@ impl PdfCraftApp {
 
     /// At launch: ask for the latest releases, and open the Updates dialog only if there is an
     /// update to install or a version to merge. Errors and "up to date" stay silent. Does
-    /// nothing without a source.
+    /// nothing without a source, or when Preferences turned the check at start off (#5737); the
+    /// preference is read once, so turning it on later waits for the next start.
     pub fn check_for_updates_quietly(&mut self) {
-        if self.update_source.is_some() {
+        if self.update_source.is_some() && self.update_check_at_start {
             self.start_update_check(true);
         }
     }
