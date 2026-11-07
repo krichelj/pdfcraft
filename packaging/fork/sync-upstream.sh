@@ -143,12 +143,12 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
     fi
     if [ -n "$left" ]; then
       files=$(echo "$left" | awk -v q='`' '{print "- " q $0 q}')
-      ask_person "$branch" "upstream merge conflicts" "Merging storytold/pdfcraft@${up:0:12} into the fork conflicts in files the sync has no rule for:
+      stop_for_person "$branch" "upstream merge conflicts" "Merging storytold/pdfcraft@${up:0:12} into the fork conflicts in files the sync has no rule for:
 
 $files
 
-To resolve: \`git fetch https://github.com/storytold/pdfcraft $UPSTREAM_SRC && git checkout -b $branch origin/main && git merge FETCH_HEAD\`, resolve and commit these files, push \`$branch\` and open a PR into main. The next sync run merges it once every check is green."
-      die "upstream merge conflicts that need a person: $(echo "$left" | tr '\n' ' ')"
+To resolve: \`git fetch https://github.com/storytold/pdfcraft $UPSTREAM_SRC && git checkout -b $branch origin/main && git merge FETCH_HEAD\`, resolve and commit these files, push \`$branch\` and open a PR into main. The next sync run merges it once every check is green." \
+        "upstream merge conflicts that need a person: $(echo "$left" | tr '\n' ' ')"
     fi
     git -c core.editor=true commit --quiet --no-edit
   fi
