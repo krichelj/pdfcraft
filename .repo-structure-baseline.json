@@ -9,6 +9,11 @@
     },
     {
       "rule": "undocumented-dir",
+      "path": "crates/preflight/fuzz/fuzz_targets",
+      "reason": "upstream storytold/pdfcraft code; the fork takes upstream's tree unchanged"
+    },
+    {
+      "rule": "undocumented-dir",
       "path": "crates/ui-egui/src/app",
       "reason": "Upstream storytold/pdfcraft's own layout, taken as is by every sync merge; the fork never restructures upstream's tree (CLAUDE.md fork rules)"
     },

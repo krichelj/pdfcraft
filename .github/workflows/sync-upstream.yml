@@ -1,4 +1,4 @@
-# Every day: bring storytold/pdfcraft's new commits into the fork through a PR, and merge it once its
+# Each new storytold/pdfcraft release (a vX.Y.Z tag): bring it into the fork through a PR, and merge it once its
 # checks pass (packaging/fork/sync-upstream.sh). The on-call LLM resolves the merge's conflicts and
 # fixes what fails CI's checks, before and after the PR opens. The merge is a push to main, which
 # starts Release: it builds the macOS app and publishes it, with the release record as its notes
@@ -11,9 +11,6 @@ name: Sync upstream
 
 on:
   schedule:
-    # Daily (the owner's choice): a new upstream release reaches the fork as <its version>-p1 by
-    # the next morning. Run it by hand (workflow_dispatch) to take one sooner.
-    - cron: "0 6 * * *"
     # Every 15 minutes: a new upstream release tag (vX.Y.Z) the fork lacks is merged as soon as
     # it appears (packaging/fork/upstream-release.sh), as <its version>-p1. GitHub can't start a
     # fork's workflow from another repository's tag, so the fork polls.
@@ -28,8 +25,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Which upstream commit to merge: the newest release tag the fork lacks, or main on the daily run
-  # and on demand. A poll that finds no new release ends here.
+  # Which upstream commit to merge: the newest release tag the fork lacks. Only a run started by hand
+  # with no new release merges upstream's main (the owner's choice, 2026-11-08: upstream cuts
+  # releases on a branch of their own, so its main conflicts with the fork between releases).
   watch:
     name: watch upstream releases
     runs-on: [self-hosted, linux]
@@ -45,11 +43,11 @@ jobs:
       - name: Newest upstream release the fork lacks
         id: release
         env:
-          POLL: ${{ github.event.schedule == '*/15 * * * *' }}
+          BY_HAND: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           tag=$(packaging/fork/upstream-release.sh)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if [ -n "$tag" ] || [ "$POLL" != true ]; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "$tag" ] || [ "$BY_HAND" = true ]; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
 
   sync:
     name: sync upstream
