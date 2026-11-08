@@ -108,9 +108,9 @@ mod tests {
     }
 
     #[test]
-    fn upstream_is_synced_daily_and_merged_through_a_checked_pr() {
+    fn upstream_is_merged_through_a_checked_pr() {
         let sync = file("sync-upstream.yml");
-        assert!(sync.contains("schedule:") && sync.contains("cron: \"0 6 * * *\""), "every day");
+        assert!(!sync.contains("cron: \"0 6 * * *\""), "no daily merge of upstream's main: releases only");
         assert!(sync.contains("cargo xtask version check-upstream"), "then proves the version is on top of upstream's release");
         let version = jobs(file("release.yml")).into_iter().find(|(n, _)| n == "version").expect("version job").1;
         assert!(version.contains("cargo xtask version check-upstream"), "and Release refuses a version that isn't");
@@ -192,7 +192,8 @@ mod tests {
         let watch = jobs(sync).into_iter().find(|(n, _)| n == "watch").expect("a watch job").1;
         assert!(watch.contains("runs-on: [self-hosted, linux]"), "on the own runners");
         assert!(watch.contains("tag=$(packaging/fork/upstream-release.sh)"));
-        assert!(watch.contains("github.event.schedule == '*/15 * * * *'"), "a poll without a new release syncs nothing");
+        assert!(watch.contains("BY_HAND: ${{ github.event_name == 'workflow_dispatch' }}"), "a scheduled run without a new release syncs nothing");
+        assert!(watch.contains("[ -n \"$tag\" ] || [ \"$BY_HAND\" = true ]"), "main only by hand");
         let job = jobs(sync).into_iter().find(|(n, _)| n == "sync").expect("a sync job").1;
         assert!(job.contains("needs: watch") && job.contains("if: needs.watch.outputs.run == 'true'"));
         assert!(job.contains("SYNC_UPSTREAM_TAG: ${{ needs.watch.outputs.tag }}"), "the sync merges that tag");

@@ -26,11 +26,13 @@ environment, which deploys only from the `release` branch.
 4. Push to `origin main`.
 
 ## Fork rule: upstream syncs and releases run themselves
-- **Sync upstream** (`.github/workflows/sync-upstream.yml`, daily 06:00 UTC and on demand) runs
+- **Sync upstream** (`.github/workflows/sync-upstream.yml`, on each upstream release, and on demand) runs
   `packaging/fork/sync-upstream.sh`. A new storytold/pdfcraft release tag (`vX.Y.Z`) is merged within
   an hour: `packaging/fork/release-watch.sh`, a `systemd --user` timer on the runner host (hourly; setup: `docs/fork/release-watch.md`), dispatches the workflow when `upstream-release.sh` names a tag
   the fork lacks, and that run merges the tag's commit (`SYNC_UPSTREAM_TAG`), not main. GitHub's own
-  schedules start hours late, so the workflow's 15-minute cron is only the fallback. It merges storytold/pdfcraft main on a `sync/upstream-<sha>`
+  schedules start hours late, so the workflow's 15-minute cron is only the fallback. Upstream's main
+  is merged only when the workflow is run by hand with no new release (owner, 2026-11-08: upstream
+  releases from a branch of its own, so its main conflicts between releases). It merges on a `sync/upstream-<sha>`
   branch, keeps only the fork's workflows, bumps the version (`<base>-p<N+1>`, or `<new base>-p1`)
   and writes the release record listing the upstream commits. It then opens the PR, waits for its
   checks (CI's `test (shared code)` must pass) and merges it, which deletes the branch.
