@@ -171,6 +171,12 @@ pub(crate) struct Updates {
     pub(crate) busy: bool,
 }
 
+impl Updates {
+    /// Called as the app exits (upstream's craft-update starts a waiting update there). The fork's
+    /// installer starts when it is chosen, so nothing waits for the exit.
+    pub(crate) fn exiting(&mut self) {}
+}
+
 impl PdfCraftApp {
     /// Help ▸ Check for updates: ask for the latest releases and show the outcome.
     pub fn check_for_updates(&mut self) {
