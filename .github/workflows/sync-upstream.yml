@@ -44,8 +44,12 @@ jobs:
         id: release
         env:
           BY_HAND: ${{ github.event_name == 'workflow_dispatch' }}
+          # Debugging the sync: the repository variable set to true syncs every new upstream commit
+          # on main, not only releases (upstream-release.sh prints `main`). Unset in production.
+          SYNC_FOLLOW_MAIN: ${{ vars.SYNC_FOLLOW_MAIN }}
         run: |
           tag=$(packaging/fork/upstream-release.sh)
+          if [ "$tag" = main ]; then tag=""; echo "run=true" >> "$GITHUB_OUTPUT"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if [ -n "$tag" ] || [ "$BY_HAND" = true ]; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
 

@@ -37,6 +37,20 @@ systemctl --user list-timers pdfcraft-release-watch.timer
 journalctl --user -u pdfcraft-release-watch.service -n 20
 ```
 
+## Debug the sync on upstream's commits
+
+Production syncs only release tags. To test the sync on every new commit of upstream's main:
+
+```bash
+gh variable set SYNC_FOLLOW_MAIN --repo krichelj/pdfcraft --body true
+```
+
+Back to releases only:
+
+```bash
+gh variable delete SYNC_FOLLOW_MAIN --repo krichelj/pdfcraft
+```
+
 ## Remove it
 
 ```bash

@@ -50,6 +50,10 @@ if [ -z "${SYNC_FORK_REF:-}" ]; then
   git -C "$DIR" fetch --quiet origin main
   git -C "$DIR" checkout --quiet --detach origin/main
 fi
+# Debugging the sync: the repository variable SYNC_FOLLOW_MAIN=true makes every new upstream commit
+# start it, not only a release (upstream-release.sh); unset, releases only.
+SYNC_FOLLOW_MAIN="${SYNC_FOLLOW_MAIN-$(gh api "repos/$REPO/actions/variables/SYNC_FOLLOW_MAIN" --jq .value 2>/dev/null || true)}"
+export SYNC_FOLLOW_MAIN
 tag=$("$DIR/packaging/fork/upstream-release.sh")
 if [ -z "$tag" ]; then exit 0; fi
 busy=$(gh run list --repo "$REPO" --workflow sync-upstream.yml --json status \

@@ -433,13 +433,16 @@ up relold commit -qam "upstream: unreleased"
 # A tag name that isn't a release is refused before anything is fetched.
 upstream relbad
 sync relbad "" SYNC_UPSTREAM_TAG="main"
-watch() { (cd "$T/fork" && SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$1" "$SRC/packaging/fork/upstream-release.sh" 2>/dev/null); }
+watch() { (cd "$T/fork" && env SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$1" "${@:2}" "$SRC/packaging/fork/upstream-release.sh" 2>/dev/null); }
 
 wait
 
 check "a new upstream release: the watcher names it" bash -c "[ \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch rel)\" = v9.9.0 ]"
 check "  the fork has upstream's newest release: the watcher names nothing" bash -c "[ -z \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch relold)\" ]"
 check "  no release tags at all: nothing" bash -c "[ -z \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch none)\" ]"
+check "debugging (SYNC_FOLLOW_MAIN=true): an unreleased upstream commit names main" bash -c "[ \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch relold SYNC_FOLLOW_MAIN=true)\" = main ]"
+check "  a new release still comes first" bash -c "[ \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch rel SYNC_FOLLOW_MAIN=true)\" = v9.9.0 ]"
+check "  nothing new on upstream's main: nothing" bash -c "[ -z \"\$($(declare -f watch); T='$T' SRC='$SRC'; watch none SYNC_FOLLOW_MAIN=true)\" ]"
 check "  the sync merges the tag" ok rel
 check "  as <its version>-p1" version_is rel "9.9.0-p1"
 check "  the tag's commit, not main's newer one" bash -c "! grep -q 'after the release' '$T/s-rel/NOTICE'"
@@ -451,7 +454,7 @@ check "a tag that isn't a release is refused" stopped relbad "is not a release t
 #     unless a run is already queued or running, and calls nothing when there is no new release.
 mkdir -p "$T/ghw"
 # shellcheck disable=SC2016 # the stand-in's own $1 $2 $*, written as they are
-printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/ghw/calls"\ncase "$1 $2" in "run list") echo "${GH_BUSY:-0}" ;; esac\n' "$T" >"$T/ghw/gh"
+printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/ghw/calls"\ncase "$1 $2" in "run list") echo "${GH_BUSY:-0}" ;; api*) echo "${GH_FOLLOW:-}" ;; esac\n' "$T" >"$T/ghw/gh"
 chmod +x "$T/ghw/gh"
 rwatch() {
   : >"$T/ghw/calls"
@@ -462,8 +465,10 @@ check "the host watcher starts Sync upstream for a new release" bash -c "$(decla
   rwatch rel && grep -q '^gh workflow run sync-upstream.yml --repo krichelj/pdfcraft --ref main$' '$T/ghw/calls'"
 check "  but not while a Sync upstream run is queued or running" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
   rwatch rel GH_BUSY=1 && grep -q '^gh run list' '$T/ghw/calls' && ! grep -q 'workflow run' '$T/ghw/calls'"
-check "  and calls nothing when the fork has upstream's newest release" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
-  rwatch relold && [ ! -s '$T/ghw/calls' ]"
+check "  and starts nothing when the fork has upstream's newest release" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
+  rwatch relold && ! grep -q 'workflow run' '$T/ghw/calls'"
+check "  debugging (the repository variable SYNC_FOLLOW_MAIN=true): an unreleased commit starts it" bash -c "$(declare -f rwatch); T='$T' SRC='$SRC'
+  rwatch relold GH_FOLLOW=true && grep -q '^gh api repos/krichelj/pdfcraft/actions/variables/SYNC_FOLLOW_MAIN' '$T/ghw/calls' && grep -q '^gh workflow run sync-upstream.yml' '$T/ghw/calls'"
 if [ -n "$catalogs" ]; then
 check "a catalog upstream deleted and the fork changed is deleted" ok catdel
 check "  and gone from the tree" bash -c "[ ! -e '$T/s-catdel/crates/ui-egui/src/i18n/ja.tsv' ]"

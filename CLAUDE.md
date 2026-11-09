@@ -32,7 +32,10 @@ environment, which deploys only from the `release` branch.
   the fork lacks, and that run merges the tag's commit (`SYNC_UPSTREAM_TAG`), not main. GitHub's own
   schedules start hours late, so the workflow's 15-minute cron is only the fallback. Upstream's main
   is merged only when the workflow is run by hand with no new release (owner, 2026-11-08: upstream
-  releases from a branch of its own, so its main conflicts between releases). It merges on a `sync/upstream-<sha>`
+  releases from a branch of its own, so its main conflicts between releases). To debug the sync on
+  commits instead of tags, set the repository variable `SYNC_FOLLOW_MAIN=true`: every new commit on
+  upstream's main then starts it (the host timer and the cron both read it); delete the variable to
+  return to releases only. It merges on a `sync/upstream-<sha>`
   branch, keeps only the fork's workflows, bumps the version (`<base>-p<N+1>`, or `<new base>-p1`)
   and writes the release record listing the upstream commits. It then opens the PR, waits for its
   checks (CI's `test (shared code)` must pass) and merges it, which deletes the branch.
