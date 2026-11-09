@@ -10,6 +10,8 @@ are harmless (the second sees the run already going) but pointless.
 
 - Linux with systemd, `git` and `gh`.
 - `gh` logged in as the fork's owner: `gh auth status`.
+- [Mergiraf](https://codeberg.org/mergiraf/mergiraf) on the runner host, for the sync's merge
+  conflicts: `cargo install --locked mergiraf`, then `mergiraf --version`.
 - Linger on, so it runs at boot without a login (needs sudo once):
 
 ```bash

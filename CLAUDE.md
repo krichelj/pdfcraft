@@ -36,6 +36,12 @@ environment, which deploys only from the `release` branch.
   branch, keeps only the fork's workflows, bumps the version (`<base>-p<N+1>`, or `<new base>-p1`)
   and writes the release record listing the upstream commits. It then opens the PR, waits for its
   checks (CI's `test (shared code)` must pass) and merges it, which deletes the branch.
+- **Conflicts no fixed rule covers go to [Mergiraf](https://codeberg.org/mergiraf/mergiraf)**, the
+  syntax-aware merge, run as an outside tool on the runner hosts (`cargo install --locked mergiraf`;
+  the sync refuses to start without it). Two new `mod tests` on both sides are folded into one
+  (`fold_test_modules` in lib.sh), the fork's own files (`FORK_OWNED`: the in-place updater) keep the
+  fork's side, and merged `.rs` files are rustfmt'ed. Whatever is still conflicting, or fails the
+  PR's CI, stops for a person.
 - **The on-call LLM** (the owner's private `oncall-llm`, configured on the runner hosts, never in
   this repo) takes what a merge breaks: conflicts the sync's rules don't cover (`resolve`, with
   `packaging/fork/oncall-instructions.md`), then CI's test-job checks on the merged tree (`fix`,

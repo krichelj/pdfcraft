@@ -4,8 +4,9 @@
 #   1. Fetch upstream main; stop when the fork already has every commit.
 #   2. On branch sync/upstream-<upstream sha>: merge it, keep the fork's rules (CLAUDE.md): only the
 #      fork's workflows stay, and Cargo.toml / Cargo.lock conflicts take upstream's and re-apply the
-#      fork version. The on-call LLM (lib.sh) resolves every other conflict; without it, or when it
-#      can't, the sync stops with the files listed.
+#      fork version. Every other conflict: the fork's own files (FORK_OWNED) keep the fork's side,
+#      the rest go to mergiraf (two new test modules folded into one), then the on-call LLM (lib.sh)
+#      when it's on; what's left stops the sync with the files listed.
 #   3. The on-call LLM runs CI's checks on the merged tree and fixes what fails, one commit per
 #      round ("Sync fix: ..."); the sync stops if they still fail.
 #   4. Bump the version: <base>-p<N+1>, or <new upstream base>-p1 when upstream's version moved,
@@ -20,6 +21,8 @@
 # Env: SYNC_DRY_RUN=1 stops before pushing; SYNC_CHECKS_TIMEOUT (seconds, default 7200);
 #      SYNC_NO_LLM=1 leaves conflicts and failing checks to a person; ONCALL_LLM, SYNC_LLM_ROUNDS,
 #      SYNC_CI_FIX_RETRIES and SYNC_FIX_CHECKS as lib.sh says;
+#      SYNC_MERGIRAF names the mergiraf binary (default: mergiraf on PATH), SYNC_FORK_OWNED replaces
+#      the list of the fork's own files (tests);
 #      SYNC_UPSTREAM_TAG=vX.Y.Z merges that release tag instead of main (upstream-release.sh);
 #      SYNC_FORK_REF syncs from that commit instead of origin/main, and SYNC_UPSTREAM_URL from another
 #      repository's main instead of storytold/pdfcraft's (tests).
@@ -30,10 +33,17 @@ UPSTREAM_URL="${SYNC_UPSTREAM_URL:-https://github.com/storytold/pdfcraft.git}"
 UPSTREAM_REF=refs/fork-notes/upstream
 REPO=krichelj/pdfcraft
 # The fork's workflows; any other one an upstream merge brings is deleted (CLAUDE.md fork rules).
+# Files the fork rewrote for itself (the in-place updater, from the fork's releases): on a conflict
+# the fork's side is kept, and the PR's CI shows what upstream's other changes then need from it.
+FORK_OWNED="${SYNC_FORK_OWNED-crates/ui-egui/src/platform/updates.rs crates/ui-egui/tests/it/updates.rs}"
 FORK_WORKFLOWS="ci.yml own-runners-guard.yml packaging-lint.yml release.yml sync-upstream.yml fork-automation.yml auto-merge.yml"
 # shellcheck source=lib.sh
 . "$ROOT/packaging/fork/lib.sh"
 
+# Mergiraf, the syntax-aware merge for the conflicts no rule below covers (both sides adding items
+# to one file, say): the runner host must have it (`cargo install --locked mergiraf`, own-ci-runners).
+MERGIRAF="${SYNC_MERGIRAF:-mergiraf}"
+command -v "$MERGIRAF" >/dev/null || die "mergiraf isn't on the runner: cargo install --locked mergiraf (docs/fork/release-watch.md)"
 git config user.name >/dev/null || git config user.name "krichelj"
 git config user.email >/dev/null || git config user.email "krichelj@users.noreply.github.com"
 if [ -z "${SYNC_FORK_REF:-}" ]; then git fetch --quiet origin main; fi
@@ -81,6 +91,8 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
   git checkout --quiet -B "$branch"
   took_deny=""
   llm_resolved=""
+  mergiraf_resolved=""
+  kept_ours=""
   RUNNER_TMP="$(mktemp -d)"
   if ! git merge --no-edit --no-ff -m "Merge storytold/pdfcraft $UPSTREAM_NAME (${up:0:12})" "$UPSTREAM_REF" >/dev/null 2>&1; then
     for f in $(git diff --name-only --diff-filter=U); do
@@ -112,8 +124,31 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
             *) git rm --quiet -f -- "$f" ;;
           esac
           ;;
-        *) ;;
+        # Anything else: the fork's own file is kept (FORK_OWNED); else mergiraf merges it by its
+        # syntax (exit 0 only when nothing is left conflicting), and two new test modules are folded
+        # into one; what's left stays for the on-call LLM or a person.
+        *)
+          if [[ " $FORK_OWNED " == *" $f "* ]]; then
+            git checkout --ours -- "$f" && git add "$f"
+            echo "sync: kept the fork's $f"
+            kept_ours="$kept_ours $f"
+          elif git show ":1:$f" >"$RUNNER_TMP/m.base" 2>/dev/null && git show ":2:$f" >"$RUNNER_TMP/m.ours" 2>/dev/null \
+            && git show ":3:$f" >"$RUNNER_TMP/m.theirs" 2>/dev/null \
+            && { "$MERGIRAF" merge "$RUNNER_TMP/m.base" "$RUNNER_TMP/m.ours" "$RUNNER_TMP/m.theirs" -p "$f" -o "$RUNNER_TMP/m.out" >/dev/null 2>&1 \
+              || { [ -s "$RUNNER_TMP/m.out" ] && fold_test_modules "$RUNNER_TMP/m.out"; }; }; then
+            cp "$RUNNER_TMP/m.out" "$f" && git add "$f"
+            echo "sync: mergiraf resolved $f"
+            mergiraf_resolved="$mergiraf_resolved $f"
+          fi
+          rm -f "$RUNNER_TMP/m.out"
+          ;;
       esac
+    done
+    # Mergiraf keeps both sides' items in their merged order; rustfmt puts them as CI's fmt check
+    # wants them (two new `mod` lines, say).
+    edition=$(sed -n 's/^edition = "\([0-9]*\)".*/\1/p' Cargo.toml | head -1)
+    for f in $mergiraf_resolved; do
+      case "$f" in *.rs) rustfmt --edition "${edition:-2024}" "$f" && git add "$f" ;; esac
     done
     # deny.toml: upstream's file, else both sides' entries (both usually add advisory ignores);
     # whichever the merged tree passes `cargo deny` with, or a person decides.
@@ -237,6 +272,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     git log --no-merges -n 40 --format='%s' "$UPSTREAM_REF" --not sync-base | sed -e 's/^/  - /' -e 's/TODO/to-do/g'
     if [ "$count" -gt 40 ]; then echo "  - and $((count - 40)) more"; fi
     if [ -n "$kept" ]; then echo "- Keeps the fork's own workflows; upstream's changes to$kept were not taken."; fi
+    if [ -n "$kept_ours" ]; then
+      files=""
+      for f in $kept_ours; do files="${files:+$files, }\`$f\`"; done
+      echo "- Keeps the fork's own $files over upstream's conflicting changes."
+    fi
+    if [ -n "$mergiraf_resolved" ]; then
+      files=""
+      for f in $mergiraf_resolved; do files="${files:+$files, }\`$f\`"; done
+      echo "- Mergiraf merged the conflicting changes in: $files."
+    fi
     if [ -n "$llm_resolved" ]; then
       files=""
       for f in $llm_resolved; do files="${files:+$files, }\`$f\`"; done
