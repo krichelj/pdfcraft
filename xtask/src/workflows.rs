@@ -199,6 +199,12 @@ mod tests {
         assert!(watch.contains("tag=$(packaging/fork/upstream-release.sh)"));
         assert!(watch.contains("BY_HAND: ${{ github.event_name == 'workflow_dispatch' }}"), "a scheduled run without a new release syncs nothing");
         assert!(watch.contains("[ -n \"$tag\" ] || [ \"$BY_HAND\" = true ]"), "main only by hand");
+        assert!(
+            watch.contains("SYNC_FOLLOW_MAIN: ${{ vars.SYNC_FOLLOW_MAIN }}") && watch.contains("if [ \"$tag\" = main ]; then tag=\"\""),
+            "or every upstream commit while the sync is being debugged (the repository variable)"
+        );
+        let release = include_str!("../../packaging/fork/upstream-release.sh");
+        assert!(release.contains("[ \"${SYNC_FOLLOW_MAIN:-}\" = true ] || exit 0"), "production: releases only");
         let job = jobs(sync).into_iter().find(|(n, _)| n == "sync").expect("a sync job").1;
         assert!(job.contains("needs: watch") && job.contains("if: needs.watch.outputs.run == 'true'"));
         assert!(job.contains("SYNC_UPSTREAM_TAG: ${{ needs.watch.outputs.tag }}"), "the sync merges that tag");
