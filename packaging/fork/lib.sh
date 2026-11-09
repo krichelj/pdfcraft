@@ -366,3 +366,48 @@ rehash_catalogs() {
     mv ATTRIBUTION.toml.new ATTRIBUTION.toml
   done
 }
+
+# Usage: fold_test_modules FILE (mergiraf's output, conflict markers in diff3 style). Both sides
+# adding a `#[cfg(test)] mod tests { … }` where the base had none conflicts in mergiraf, which won't
+# merge two items of one name: such a region becomes one module, the fork's tests then upstream's
+# (upstream's `use super::*;` dropped when the fork's has it). Any other region is left as it is.
+# Exit 0 when no conflict is left in FILE.
+fold_test_modules() {
+  awk '
+    function head(a, n,   i, j) { for (i = 1; i <= n && a[i] ~ /^[[:space:]]*$/; i++); return i }
+    function tail_(a, n,   i) { for (i = n; i >= 1 && a[i] ~ /^[[:space:]]*$/; i--); return i }
+    function is_mod(a, n,   i, j) {
+      i = head(a, n); j = tail_(a, n)
+      return i < j && a[i] == "#[cfg(test)]" && a[i + 1] == "mod tests {" && a[j] == "}"
+    }
+    function flush(   i, j, k, use) {
+      blank = 1
+      for (i = 1; i <= nb; i++) if (b[i] !~ /^[[:space:]]*$/) blank = 0
+      if (blank && is_mod(o, no) && is_mod(t, nt)) {
+        use = 0
+        j = tail_(o, no)
+        for (i = 1; i < j; i++) { print o[i]; if (o[i] == "    use super::*;") use = 1 }
+        k = head(t, nt) + 2
+        if (use && t[k] == "    use super::*;") { k++; if (t[k] ~ /^[[:space:]]*$/) k++ }
+        print ""
+        for (i = k; i <= nt; i++) print t[i]
+      } else {
+        print om; for (i = 1; i <= no; i++) print o[i]
+        print bm; for (i = 1; i <= nb; i++) print b[i]
+        print "======="; for (i = 1; i <= nt; i++) print t[i]
+        print tm; left = 1
+      }
+    }
+    s == 0 && /^<<<<<<< / { s = 1; om = $0; no = nb = nt = 0; next }
+    s == 1 && /^\|\|\|\|\|\|\| / { s = 2; bm = $0; next }
+    s == 2 && /^=======$/ { s = 3; next }
+    s == 3 && /^>>>>>>> / { tm = $0; flush(); s = 0; next }
+    s == 1 { o[++no] = $0; next }
+    s == 2 { b[++nb] = $0; next }
+    s == 3 { t[++nt] = $0; next }
+    { print }
+    END { if (s != 0) left = 1; exit left }' "$1" >"$1.fold"
+  local rc=$?
+  mv "$1.fold" "$1"
+  return "$rc"
+}

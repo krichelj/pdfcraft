@@ -123,6 +123,11 @@ mod tests {
         assert!(lib.contains("gh pr merge \"$1\" --repo \"$REPO\" --merge --delete-branch") && lib.contains("merge_pr \"$pr\""));
         assert!(lib.contains(".name == \"test (shared code)\" and .conclusion == \"success\""), "merges only after CI's tests passed");
         assert!(script.contains("cargo xtask fork-notes check"), "and with its release record");
+        assert!(
+            script.contains("command -v \"$MERGIRAF\"") && script.contains("\"$MERGIRAF\" merge"),
+            "conflicts no rule covers go to mergiraf, which the runner host must have"
+        );
+        assert!(lib.contains("fold_test_modules()") && script.contains("fold_test_modules \"$RUNNER_TMP/m.out\""));
         let guard = file("own-runners-guard.yml");
         assert!(guard.contains("\"Sync upstream\""), "the guard watches it");
         let scenarios = file("fork-automation.yml");

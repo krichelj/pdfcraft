@@ -159,7 +159,8 @@ sync() {
   : >"$d.llm"
   # In the background: the cases run side by side (`wait` below).
   (
-    cd "$d" && env PATH="$T/ghnone:$PATH" SYNC_DRY_RUN=1 SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$n" STUB_LLM_LOG="$d.llm" "$@" \
+    # No fork-owned files unless a case names them: the code cases conflict in updates.rs.
+    cd "$d" && env PATH="$T/ghnone:$PATH" SYNC_FORK_OWNED= SYNC_DRY_RUN=1 SYNC_FORK_REF=HEAD SYNC_UPSTREAM_URL="$T/up-$n" STUB_LLM_LOG="$d.llm" "$@" \
       bash packaging/fork/sync-upstream.sh >"$d.out" 2>&1 || rc=$?
     echo "$rc" >"$d.rc"
   ) &
@@ -292,25 +293,46 @@ code_change() {
   sed -i 's#^pub const RELEASES_PAGE: &str = .*#pub const RELEASES_PAGE: \&str = "https://example.com/upstream";#' "$T/up-$1/crates/ui-egui/src/platform/updates.rs"
   up "$1" commit -qam "upstream: change the releases page"
 }
+# The fork's side of the same line (the fork keeps upstream's page as UPSTREAM_RELEASES_PAGE): a
+# conflict mergiraf can't resolve either.
+CODE_FORK="sed -i 's#^pub const UPSTREAM_RELEASES_PAGE: &str = .*#pub const UPSTREAM_RELEASES_PAGE: \\&str = \\\"https://example.com/fork\\\";#' crates/ui-egui/src/platform/updates.rs && git commit -qam 'Fork: the page'"
 code_change code
-sync code "" SYNC_NO_LLM=1
+sync code "$CODE_FORK" SYNC_NO_LLM=1
+# 6a. Both sides add an item at the same place in a Rust file: mergiraf keeps both.
+upstream rsitem
+printf 'mod upstream_item {}\n' >>"$T/up-rsitem/crates/geom/src/lib.rs"
+up rsitem commit -qam "upstream: an item"
+sync rsitem "printf 'mod fork_item {}\\n' >>crates/geom/src/lib.rs && git commit -qam 'Fork: an item'" SYNC_NO_LLM=1
+# 6b. Both sides add a test module to a file that had none: folded into one module.
+upstream rstests
+printf '\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn upstream_test() {}\n}\n' >>"$T/up-rstests/crates/annot/src/info.rs"
+up rstests commit -qam "upstream: tests"
+sync rstests "printf '\\n#[cfg(test)]\\nmod tests {\\n    use super::*;\\n\\n    #[test]\\n    fn fork_test() {}\\n}\\n' >>crates/annot/src/info.rs && git commit -qam 'Fork: tests'" SYNC_NO_LLM=1
+# 6c. The same one-line conflict in a file the fork owns: the fork's side is kept.
+code_change owned
+sync owned "$CODE_FORK" SYNC_NO_LLM=1 SYNC_FORK_OWNED=crates/ui-egui/src/platform/updates.rs
+# 6d. A runner host without mergiraf: the sync stops before merging anything.
+upstream nomergiraf
+echo "upstream note" >>"$T/up-nomergiraf/NOTICE"
+up nomergiraf commit -qam "upstream: an ordinary change"
+sync nomergiraf "" SYNC_MERGIRAF=/nonexistent/mergiraf
 # The same conflict for real (no dry run): the sync stops before any push and opens an issue; with
 # an issue already open for that branch (a stand-in gh lists #5), it comments there instead.
 code_change codeissue
-sync codeissue "" SYNC_NO_LLM=1 SYNC_DRY_RUN=
+sync codeissue "$CODE_FORK" SYNC_NO_LLM=1 SYNC_DRY_RUN=
 code_change codeissue2
 mkdir -p "$T/ghissue"
 # shellcheck disable=SC2016 # the stand-in's own $1 $2 $*, written as they are
 printf '#!/usr/bin/env bash\necho "gh $*" >>"%s/ghissue/calls"\ncase "$1 $2" in "issue list") echo 5 ;; esac\n' "$T" >"$T/ghissue/gh"
 chmod +x "$T/ghissue/gh"
-sync codeissue2 "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghissue:$PATH"
+sync codeissue2 "$CODE_FORK" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghissue:$PATH"
 # With issues disabled (a stand-in gh whose issue commands fail), the sync still says what stopped it.
 code_change codenoissue
 mkdir -p "$T/ghnoissue"
 # shellcheck disable=SC2016 # the stand-in's own $1, written as it is
 printf '#!/usr/bin/env bash\ncase "$1" in issue) echo "the repository has disabled issues" >&2; exit 1 ;; esac\n' >"$T/ghnoissue/gh"
 chmod +x "$T/ghnoissue/gh"
-sync codenoissue "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghnoissue:$PATH"
+sync codenoissue "$CODE_FORK" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghnoissue:$PATH"
 # The hourly runs after the first stop on the same conflict: a stand-in gh that keeps what was
 # commented on issue #5 and shows it back. The second run finds its own ask there and only warns.
 code_change quiet
@@ -325,14 +347,14 @@ case "\$1 \$2" in
 esac
 EOF
 chmod +x "$T/ghquiet/gh"
-sync quiet "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghquiet:$PATH"
+sync quiet "$CODE_FORK" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghquiet:$PATH"
 wait $!
 ln -s "$T/up-quiet" "$T/up-quietagain"
-sync quietagain "" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghquiet:$PATH" GITHUB_ENV="$T/quiet.env"
+sync quietagain "$CODE_FORK" SYNC_NO_LLM=1 SYNC_DRY_RUN= PATH="$T/ghquiet:$PATH" GITHUB_ENV="$T/quiet.env"
 code_change llm
-sync llm
+sync llm "$CODE_FORK"
 code_change llmdown
-sync llmdown "" STUB_LLM=down
+sync llmdown "$CODE_FORK" STUB_LLM=down
 
 # 6b. The merged tree fails a check: the LLM's fix is committed before the release commit; a fix
 #     that doesn't make the checks pass stops the sync before anything is pushed.
@@ -483,6 +505,20 @@ check "deny.toml conflict: merged" ok deny
 check "  with upstream's entry" grep -q "RUSTSEC-2099-0001" "$T/s-deny/deny.toml"
 check "  and the fork's entry is kept or upstream's policy passes alone" grep -q "RUSTSEC-2026-0371" "$T/s-deny/deny.toml"
 check "  checked by cargo deny" said deny "cargo deny passes"
+check "both sides adding a Rust item: merged by mergiraf" ok rsitem
+check "  saying so" said rsitem "mergiraf resolved crates/geom/src/lib.rs"
+check "  both items in the file, no markers left" bash -c \
+  "grep -q 'mod fork_item' '$T/s-rsitem/crates/geom/src/lib.rs' && grep -q 'mod upstream_item' '$T/s-rsitem/crates/geom/src/lib.rs' && ! grep -q '^<<<<<<<' '$T/s-rsitem/crates/geom/src/lib.rs'"
+check "  formatted as CI's fmt check wants" rustfmt --edition 2024 --check "$T/s-rsitem/crates/geom/src/lib.rs"
+# shellcheck disable=SC2016 # literal backticks, the record's Markdown
+check "  and the record names it" grep -q 'Mergiraf merged the conflicting changes in: `crates/geom/src/lib.rs`' "$T/s-rsitem/docs/fork/releases/v$next.md"
+check "both sides adding a test module: folded into one" ok rstests
+check "  one module with both tests and one use" bash -c \
+  "f='$T/s-rstests/crates/annot/src/info.rs'; [ \"\$(grep -c '^mod tests {' \"\$f\")\" = 1 ] && [ \"\$(grep -c 'use super::\*;' \"\$f\")\" = 1 ] && grep -q 'fn fork_test' \"\$f\" && grep -q 'fn upstream_test' \"\$f\""
+check "a conflict in a fork-owned file: the fork's side is kept" ok owned
+check "  saying so" said owned "kept the fork's crates/ui-egui/src/platform/updates.rs"
+check "  without upstream's line" bash -c "! grep -q example.com/upstream '$T/s-owned/crates/ui-egui/src/platform/updates.rs'"
+check "no mergiraf on the runner: the sync stops" stopped nomergiraf "mergiraf isn't on the runner"
 check "a code conflict without the LLM (SYNC_NO_LLM=1) stops the sync" stopped code "conflicts that need a person"
 check "  naming the file" said code "crates/ui-egui/src/platform/updates.rs"
 check "  without asking the LLM anything" bash -c "! test -s '$T/s-code.llm'"
