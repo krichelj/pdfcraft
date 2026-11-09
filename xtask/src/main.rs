@@ -16,8 +16,8 @@ mod netcheck;
 mod parity;
 mod screenshots;
 mod version;
-mod workflows;
 mod web;
+mod workflows;
 
 type Command = fn(&[String]) -> anyhow::Result<()>;
 
