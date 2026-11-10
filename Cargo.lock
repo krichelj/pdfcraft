@@ -4683,8 +4683,10 @@ dependencies = [
  "pdfcraft-testkit",
  "pdfcraft-xfa",
  "regex",
+ "roxmltree 0.21.2",
  "sha2 0.11.1",
  "thiserror 2.0.21",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -4708,6 +4710,7 @@ dependencies = [
  "skrifa 0.44.0",
  "thiserror 2.0.21",
  "unicode-bidi",
+ "url",
 ]
 
 [[package]]
