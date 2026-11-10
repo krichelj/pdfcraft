@@ -249,6 +249,14 @@ up wf add -A
 up wf commit -qm "upstream: a workflow the fork doesn't run"
 sync wf
 
+# 4a. Upstream's main has an older version than the fork's base (releases are cut on a branch): the
+#     fork's next patch level, never a downgrade.
+upstream older
+old=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' "$T/up-older/Cargo.toml" | head -1)
+sed -i "s/\"$old\"/\"0.0.1\"/g" "$T/up-older/Cargo.toml"
+up older commit -qam "upstream: an older version on main"
+sync older
+
 # 4. Upstream moves its version: the fork's line restarts at <new base>-p1.
 upstream bump
 # As `cargo xtask version set 9.9.0` does upstream: the workspace version and every internal crate's.
@@ -497,6 +505,8 @@ check "  its record lists the newest 40 commits and counts the rest" bash -c \
 check "a new upstream workflow: merged" ok wf
 check "  and removed" bash -c "! test -e '$T/s-wf/.github/workflows/x.yml'"
 check "  the fork's workflows stay" in_tree wf .github/workflows/sync-upstream.yml
+check "upstream's main on an older version: merged" ok older
+check "  as the fork's next patch level, $next, not a downgrade" version_is older "$next"
 check "an upstream version bump: merged" ok bump
 check "  the fork version restarts at 9.9.0-p1" version_is bump "9.9.0-p1"
 check "  and its record passes" notes_ok bump "9.9.0-p1"

@@ -252,7 +252,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   base_now="${current%%-*}"
   base_up=$(git show "$UPSTREAM_REF:Cargo.toml" | sed -n '/^version = "/{s/^version = "\([^"]*\)".*/\1/p;q;}')
   base_up="${base_up%%-*}"
-  if [ "$base_up" = "$base_now" ]; then
+  # Upstream's version moved past the fork's base: <new base>-p1. Same or older (upstream's main
+  # keeps an older version while releases are cut on a branch of their own): the next patch level,
+  # never a version below the one the fork has.
+  if [ "$(printf '%s\n%s\n' "$base_up" "$base_now" | sort -V | tail -1)" = "$base_now" ]; then
     level="${current##*-p}"
     case "$level" in "" | *[!0-9]*) die "the fork version $current has no -p<N>" ;; esac
     version="$base_now-p$((level + 1))"
