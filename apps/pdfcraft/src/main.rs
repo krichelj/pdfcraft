@@ -494,6 +494,7 @@ fn app_creator<'a>(
         // Once per launch, quietly: the Updates dialog opens only when a newer release exists.
         app.check_for_updates_quietly();
         app.printer_source = Some(pdfcraft_ui_egui::system_printers());
+        app.two_sided_source = Some(pdfcraft_ui_egui::system_two_sided());
         app.os_key_store_ids = cfg!(any(target_os = "macos", target_os = "windows"));
         #[cfg(target_os = "macos")]
         {
