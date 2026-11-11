@@ -104,6 +104,8 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
   llm_resolved=""
   mergiraf_resolved=""
   kept_ours=""
+  stubbed=""
+  ignored=""
   RUNNER_TMP="$(mktemp -d)"
   if ! git merge --no-edit --no-ff -m "Merge storytold/pdfcraft $UPSTREAM_NAME (${up:0:12})" "$UPSTREAM_REF" >/dev/null 2>&1; then
     for f in $(git diff --name-only --diff-filter=U); do
@@ -140,9 +142,30 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
         # into one; what's left stays for the on-call LLM or a person.
         *)
           if [[ " $FORK_OWNED " == *" $f "* ]]; then
-            git checkout --ours -- "$f" && git add "$f"
+            git checkout --ours -- "$f"
             echo "sync: kept the fork's $f"
             kept_ours="$kept_ours $f"
+            case "$f" in
+              *.rs)
+                if git show ":3:$f" >"$RUNNER_TMP/u.rs" 2>/dev/null && added=$(add_upstream_stubs "$f" "$RUNNER_TMP/u.rs") && [ -n "$added" ]; then
+                  echo "sync: added upstream's $added to the fork's $f"
+                  stubbed="$stubbed $f ($added)"
+                  # Upstream's tests of what the stubs stand in for can't pass in the fork: skipped.
+                  read -ra names <<<"$added"
+                  pattern=$(IFS='|' && echo "${names[*]}")
+                  for t in $(git grep -lwE "$pattern" -- '*.rs' ":!$f"); do
+                    n=$(ignore_stubbed_tests "$t" "${names[@]}")
+                    if [ "$n" != 0 ]; then
+                      git add "$t"
+                      echo "sync: skipped $n of upstream's updater tests in $t"
+                      ignored="$ignored $t"
+                    fi
+                  done
+                  mergiraf_resolved="$mergiraf_resolved $f"
+                fi
+                ;;
+            esac
+            git add "$f"
           elif git show ":1:$f" >"$RUNNER_TMP/m.base" 2>/dev/null && git show ":2:$f" >"$RUNNER_TMP/m.ours" 2>/dev/null \
             && git show ":3:$f" >"$RUNNER_TMP/m.theirs" 2>/dev/null \
             && { "$MERGIRAF" merge "$RUNNER_TMP/m.base" "$RUNNER_TMP/m.ours" "$RUNNER_TMP/m.theirs" -p "$f" -o "$RUNNER_TMP/m.out" >/dev/null 2>&1 \
@@ -291,6 +314,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
       for f in $kept_ours; do files="${files:+$files, }\`$f\`"; done
       echo "- Keeps the fork's own $files over upstream's conflicting changes."
     fi
+    if [ -n "$stubbed" ]; then echo "- Adds upstream's new methods as do-nothing stubs to:$stubbed."; fi
+    if [ -n "$ignored" ]; then echo "- Skips upstream's tests of its own updater (the fork's replaces it) in:$ignored."; fi
     if [ -n "$mergiraf_resolved" ]; then
       files=""
       for f in $mergiraf_resolved; do files="${files:+$files, }\`$f\`"; done

@@ -411,3 +411,86 @@ fold_test_modules() {
   mv "$1.fold" "$1"
   return "$rc"
 }
+
+# Usage: add_upstream_stubs <fork file> <upstream file>. For a fork-owned Rust file: each pub or
+# pub(crate) method upstream's version has in an inherent `impl <Type> {` block and the fork's
+# doesn't is appended to the fork's file with a `Default::default()` body, under its cfg
+# attributes, so upstream's callers (its other code and tests) still compile. Prints the names added.
+add_upstream_stubs() {
+  local fork="$1" theirs="$2" have stubs
+  have=$(grep -oE '\bfn [A-Za-z_][A-Za-z0-9_]*' "$fork" | cut -c4- | sort -u | tr '\n' ' ')
+  stubs=$(awk -v have=" $have" '
+    function flush() {
+      if (out == "") return
+      printf "\n/// Upstream'\''s API that the fork'\''s own code does not use: added by the sync so upstream'\''s\n/// callers compile.\nimpl %s {%s}\n", ty, out
+      out = ""
+    }
+    /^impl [A-Za-z_][A-Za-z0-9_]* \{$/ { ty = $2; inimpl = 1; attrs = ""; next }
+    inimpl && /^\}/ { flush(); inimpl = 0; next }
+    !inimpl { next }
+    sig != "" {
+      sig = sig "\n" $0
+      if ($0 ~ /\{ *$/) { emit(); }
+      next
+    }
+    /^    #\[/ { attrs = attrs $0 "\n"; next }
+    /^    pub(\(crate\))? (const )?fn [A-Za-z_]/ {
+      name = $0; sub(/.*fn /, "", name); sub(/[^A-Za-z0-9_].*/, "", name)
+      if (index(have, " " name " ") == 0) { sig = $0; if ($0 ~ /\{ *$/) emit(); else next }
+      attrs = ""; next
+    }
+    /^    \/\/\// { next }
+    { attrs = "" }
+    function emit() {
+      sub(/ *\{ *$/, "", sig)
+      out = out "\n" attrs "    #[allow(dead_code, unused_variables)]\n" sig " {\n        Default::default()\n    }\n"
+      printf "%s\n", name > "/dev/stderr"
+      sig = ""; attrs = ""
+    }
+  ' "$theirs" 2>"$fork.stubnames") || return 1
+  if [ -n "$stubs" ]; then printf '%s\n' "$stubs" >>"$fork"; fi
+  paste -sd' ' "$fork.stubnames"
+  rm -f "$fork.stubnames"
+}
+
+# Usage: ignore_stubbed_tests <file> <name...>. Marks `#[ignore]` each `#[test]` in <file> that calls
+# one of the stubbed methods <name>, itself or through a helper function in the same file: those
+# tests check upstream's own behaviour, which the fork's replacement doesn't have. Prints the count.
+ignore_stubbed_tests() {
+  local f="$1" n
+  shift
+  n=$(awk -v names=" $* " '
+    function calls(body, set,   k) { for (k in set) if (index(body, k "(")) return 1; return 0 }
+    NR == FNR {
+      line[NR] = $0
+      if (fname == "" && match($0, /^ *(pub(\(crate\))? )?fn [A-Za-z_][A-Za-z0-9_]*/)) {
+        fname = substr($0, RSTART, RLENGTH); sub(/.*fn /, "", fname)
+        ind = $0; sub(/[^ ].*/, "", ind); start = NR; body = ""
+        istest[fname] = (prev ~ /^ *#\[test\]/ || prev2 ~ /^ *#\[test\]/); at[fname] = start
+      }
+      if (fname != "") {
+        body = body $0 "\n"
+        if ($0 == ind "}" || ($0 ~ /\}$/ && NR == start)) { bodies[fname] = body; fname = "" }
+      }
+      prev2 = prev; prev = $0; next
+    }
+    FNR == 1 {
+      split(names, a, " "); for (i in a) if (a[i] != "") hit["." a[i]] = 1
+      for (round = 0; round < 4; round++)
+        for (g in bodies) if (!istest[g] && !(g in hit) && calls(bodies[g], hit)) hit[g] = 1
+      for (g in bodies) if (istest[g] && calls(bodies[g], hit)) {
+        for (j = at[g] - 1; j > 0 && line[j] ~ /^ *(#\[|\/\/\/)/; j--) if (line[j] ~ /#\[test\]/) mark[j] = 1
+      }
+    }
+    {
+      if (FNR in mark && line[FNR - 1] !~ /#\[ignore/) {
+        ind = $0; sub(/[^ ].*/, "", ind)
+        print ind "#[ignore = \"fork: tests upstream'\''s updater, which the fork replaces\"]"; count++
+      }
+      print > "/dev/stdout"
+    }
+    END { print count + 0 > "/dev/stderr" }
+  ' "$f" "$f" 2>&1 >"$f.ign")
+  mv "$f.ign" "$f"
+  echo "$n"
+}

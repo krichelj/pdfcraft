@@ -330,6 +330,13 @@ sync rstests "printf '\\n#[cfg(test)]\\nmod tests {\\n    use super::*;\\n\\n   
 # 6c. The same one-line conflict in a file the fork owns: the fork's side is kept.
 code_change owned
 sync owned "$CODE_FORK" SYNC_NO_LLM=1 SYNC_FORK_OWNED=crates/ui-egui/src/platform/updates.rs
+# 6d. Upstream's fork-owned file gains a method its other code and tests call: the fork's file gets
+#     a do-nothing stub of it, and the tests of it (directly or through a helper) are skipped.
+code_change stubs
+printf '\nimpl PdfCraftApp {\n    #[cfg(not(target_arch = "wasm32"))]\n    pub fn upstream_only_api(&mut self, on: bool) {\n        let _ = on;\n    }\n}\n' >>"$T/up-stubs/crates/ui-egui/src/platform/updates.rs"
+printf '\nfn with_upstream_api() {\n    let mut app = PdfCraftApp::default();\n    app.upstream_only_api(true);\n}\n\n#[test]\nfn through_a_helper() {\n    with_upstream_api();\n}\n\n#[test]\nfn unrelated() {\n    assert!(true);\n}\n' >>"$T/up-stubs/crates/ui-egui/tests/it/comments.rs"
+up stubs commit -qam "upstream: a new updater method and its test"
+sync stubs "$CODE_FORK" SYNC_NO_LLM=1 SYNC_FORK_OWNED=crates/ui-egui/src/platform/updates.rs
 # 6d. A runner host without mergiraf: the sync stops before merging anything.
 upstream nomergiraf
 echo "upstream note" >>"$T/up-nomergiraf/NOTICE"
@@ -546,6 +553,11 @@ check "  one module with both tests and one use" bash -c \
 check "a conflict in a fork-owned file: the fork's side is kept" ok owned
 check "  saying so" said owned "kept the fork's crates/ui-egui/src/platform/updates.rs"
 check "  without upstream's line" bash -c "! grep -q example.com/upstream '$T/s-owned/crates/ui-egui/src/platform/updates.rs'"
+check "upstream's new method in a fork-owned file: stubbed in the fork's" said stubs "added upstream's .*upstream_only_api to the fork's crates/ui-egui/src/platform/updates.rs"
+check "  as a do-nothing method" bash -c "grep -A2 'pub fn upstream_only_api(&mut self, on: bool)' '$T/s-stubs/crates/ui-egui/src/platform/updates.rs' | grep -q 'Default::default()'"
+check "  the test calling it through a helper is skipped" bash -c "grep -B2 '^fn through_a_helper' '$T/s-stubs/crates/ui-egui/tests/it/comments.rs' | grep -q '#\[ignore = \"fork:'"
+check "  an unrelated test is not" bash -c "! grep -B2 '^fn unrelated' '$T/s-stubs/crates/ui-egui/tests/it/comments.rs' | grep -q ignore"
+check "  the record says both" bash -c "grep -q 'do-nothing stubs' '$T/s-stubs/docs/fork/releases/'*.md && grep -q 'Skips upstream' '$T/s-stubs/docs/fork/releases/'*.md"
 check "no mergiraf on the runner: the sync stops" stopped nomergiraf "mergiraf isn't on the runner"
 check "a code conflict without the LLM (SYNC_NO_LLM=1) stops the sync" stopped code "conflicts that need a person"
 check "  naming the file" said code "crates/ui-egui/src/platform/updates.rs"
