@@ -155,7 +155,7 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
                   pattern=$(IFS='|' && echo "${names[*]}")
                   for t in $(git grep -lwE "$pattern" -- '*.rs'); do
                     [[ " $FORK_OWNED " == *" $t "* ]] && continue
-                    n=$(ignore_stubbed_tests "$t" "${names[@]}")
+                    n=$(skip_stubbed_tests "$t" "${names[@]}")
                     if [ "$n" != 0 ]; then
                       git add "$t"
                       echo "sync: skipped $n of upstream's updater tests in $t"

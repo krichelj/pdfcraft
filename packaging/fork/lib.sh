@@ -459,10 +459,11 @@ add_upstream_stubs() {
   rm -f "$fork.stubnames"
 }
 
-# Usage: ignore_stubbed_tests <file> <name...>. Marks `#[ignore]` each `#[test]` in <file> that calls
-# one of the stubbed methods <name>, itself or through a helper function in the same file: those
-# tests check upstream's own behaviour, which the fork's replacement doesn't have. Prints the count.
-ignore_stubbed_tests() {
+# Usage: skip_stubbed_tests <file> <name...>. Compiles out (`#[cfg(any())]`, never true) each
+# `#[test]` in <file> that calls one of the stubbed methods <name>, itself or through a helper
+# function in the same file, and those helpers: they check upstream's own updater, which the fork's
+# replaces, and use its types. Prints how many tests.
+skip_stubbed_tests() {
   local f="$1" n
   shift
   n=$(awk -v names=" $* " '
@@ -484,14 +485,15 @@ ignore_stubbed_tests() {
       split(names, a, " "); for (i in a) if (a[i] != "") hit["." a[i]] = 1
       for (round = 0; round < 4; round++)
         for (g in bodies) if (!istest[g] && !(g in hit) && calls(bodies[g], hit)) hit[g] = 1
-      for (g in bodies) if (istest[g] && calls(bodies[g], hit)) {
-        for (j = at[g] - 1; j > 0 && line[j] ~ /^ *(#\[|\/\/\/)/; j--) if (line[j] ~ /#\[test\]/) mark[j] = 1
+      for (g in bodies) if ((istest[g] && calls(bodies[g], hit)) || (!istest[g] && (g in hit))) {
+        for (j = at[g]; j > 1 && line[j - 1] ~ /^ *(#\[|\/\/\/)/; j--) ;
+        if (line[j - 1] !~ /cfg\(any\(\)\)/) { mark[j] = 1; if (istest[g]) count++ }
       }
     }
     {
-      if (FNR in mark && line[FNR - 1] !~ /#\[ignore/) {
+      if (FNR in mark) {
         ind = $0; sub(/[^ ].*/, "", ind)
-        print ind "#[ignore = \"fork: tests upstream'\''s updater, which the fork replaces\"]"; count++
+        print ind "#[cfg(any())] // fork: upstream'\''s updater, which the fork replaces"
       }
       print > "/dev/stdout"
     }
