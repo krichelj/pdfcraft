@@ -153,7 +153,8 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
                   # Upstream's tests of what the stubs stand in for can't pass in the fork: skipped.
                   read -ra names <<<"$added"
                   pattern=$(IFS='|' && echo "${names[*]}")
-                  for t in $(git grep -lwE "$pattern" -- '*.rs' ":!$f"); do
+                  for t in $(git grep -lwE "$pattern" -- '*.rs'); do
+                    [[ " $FORK_OWNED " == *" $t "* ]] && continue
                     n=$(ignore_stubbed_tests "$t" "${names[@]}")
                     if [ "$n" != 0 ]; then
                       git add "$t"

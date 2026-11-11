@@ -448,7 +448,13 @@ add_upstream_stubs() {
       sig = ""; attrs = ""
     }
   ' "$theirs" 2>"$fork.stubnames") || return 1
-  if [ -n "$stubs" ]; then printf '%s\n' "$stubs" >>"$fork"; fi
+  # Before the test module, if there is one: clippy refuses items after it.
+  if [ -n "$stubs" ]; then
+    printf '%s\n\n' "$stubs" >"$fork.stubs"
+    awk -v f="$fork.stubs" '!done && /^#\[cfg\(test\)\]/ { while ((getline l < f) > 0) print l; done = 1 } { print }
+      END { if (!done) while ((getline l < f) > 0) print l }' "$fork" >"$fork.new" && mv "$fork.new" "$fork"
+    rm -f "$fork.stubs"
+  fi
   paste -sd' ' "$fork.stubnames"
   rm -f "$fork.stubnames"
 }
