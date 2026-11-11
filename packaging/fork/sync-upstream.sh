@@ -67,6 +67,17 @@ branch="sync/upstream-${up:0:12}"
 echo "sync: $new new upstream commits, up to $UPSTREAM_NAME (${up:0:12}); branch $branch"
 
 pr=$(gh pr list --repo "$REPO" --head "$branch" --state open --json number --jq '.[0].number // empty')
+if [ -z "$pr" ]; then
+  # A sync PR opened for older upstream commits is still open (stopped for a person): finish that one
+  # first, on its own branch, so a stuck sync keeps one PR and one issue instead of a new pair for
+  # every upstream commit (each with its own failure mail).
+  read -r pr other < <(gh pr list --repo "$REPO" --state open --json number,headRefName \
+    --jq '[.[] | select(.headRefName | startswith("sync/upstream-"))] | sort_by(.number) | .[0] // empty | "\(.number) \(.headRefName)"') || true
+  if [ -n "$pr" ]; then
+    branch="$other"
+    echo "sync: PR #$pr ($branch) is still open; finishing it before opening another"
+  fi
+fi
 stale=""
 if [ -n "$pr" ]; then
   git fetch --quiet origin "$branch"

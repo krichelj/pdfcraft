@@ -228,6 +228,17 @@ git -C "$T/fork" branch -f "sync/upstream-$(git -C "$T/up-stalepr" rev-parse --s
 git -C "$T/fork" branch -f "sync/upstream-$(git -C "$T/up-currentpr" rev-parse --short=12 HEAD)" HEAD
 sync stalepr "" PATH="$T/ghpr:$PATH"
 sync currentpr "" PATH="$T/ghpr:$PATH"
+# 2d. A sync PR for older upstream commits is still open (stopped for a person): newer upstream
+#     commits go on that PR's branch, not into a new PR and issue each.
+mkdir -p "$T/ghold"
+# shellcheck disable=SC2016 # the stand-in's own $1 $2 $*, written as they are
+printf '#!/usr/bin/env bash\ncase "$1 $2 $*" in\n  *--head*) ;;\n  "pr list"*) echo "78 sync/upstream-0123456789ab" ;;\nesac\n' >"$T/ghold/gh"
+chmod +x "$T/ghold/gh"
+upstream oldpr
+echo "upstream note" >>"$T/up-oldpr/NOTICE"
+up oldpr commit -qam "upstream: an ordinary change"
+git -C "$T/fork" branch -f sync/upstream-0123456789ab HEAD
+sync oldpr "" PATH="$T/ghold:$PATH"
 # The rebuild for real (no dry run): the branch is replaced on its origin and the PR's title and
 # record updated, through the REST API (`gh pr edit` fails on GitHub's retired classic projects).
 # The stand-in gh reports no checks, so the sync then stops waiting for them.
@@ -494,6 +505,8 @@ check "  assets still check out" assets_ok plain
 check "an open sync PR behind main is rebuilt from today's main" said stalepr "PR #77 is behind main; rebuilding it"
 check "  through the merge to its dry-run stop" said stalepr "dry run; stopping before the push"
 check "an open sync PR on today's main: a dry run stops there" said currentpr "dry run; PR #77 is open on the current main"
+check "an older sync PR still open takes the newer upstream commits" said oldpr "PR #78 (sync/upstream-0123456789ab) is still open; finishing it"
+check "  on its own branch, opening no new PR" said oldpr "dry run; PR #78 is open on the current main"
 check "  without asking the LLM or touching the PR" bash -c "[ ! -s '$T/s-currentpr.llm' ] && [ ! -s '$T/ghpr/calls' ]"
 check "a rebuilt sync PR's branch is replaced on its origin" bash -c \
   "git -C '$T/fork' merge-base --is-ancestor \"\$(git -C '$T/fork' rev-parse HEAD)\" '$rebuilt_branch' && git -C '$T/fork' log -1 --format=%s '$rebuilt_branch' | grep -q '^Release: PdfCraft'"
