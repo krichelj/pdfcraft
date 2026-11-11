@@ -508,6 +508,22 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
     }
 }
 
+/// Upstream's API that the fork's own code does not use: added by the sync so upstream's
+/// callers compile.
+impl PdfCraftApp {
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code, unused_variables)]
+    pub fn set_startup_update_check(&mut self, on: bool) {
+        Default::default()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code, unused_variables)]
+    pub fn set_update_source(&mut self, source: UpdateSource) {
+        Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
