@@ -175,6 +175,13 @@ impl Updates {
     /// Called as the app exits (upstream's craft-update starts a waiting update there). The fork's
     /// installer starts when it is chosen, so nothing waits for the exit.
     pub(crate) fn exiting(&mut self) {}
+
+    /// Whether upstream's startup update prompt is open. The fork offers updates only in its own
+    /// dialog, so there is never one; upstream's app.rs asks before it treats a key as the app's.
+    #[allow(dead_code)] // called by upstream's app.rs, which the next sync brings in
+    pub(crate) fn prompt_open(&self) -> bool {
+        false
+    }
 }
 
 impl PdfCraftApp {
