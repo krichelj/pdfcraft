@@ -16,7 +16,7 @@ ureq = { version = "3.4", default-features = false, features = ["rustls-no-provi
 rustls-native-certs = "0.8"
 pdfcraft-ui-egui = { workspace = true }
 # The fork's updater app: its command line, the GitHub CLI and the stages (Help > Check for updates).
-pdfcraft-updater = { path = "../pdfcraft-updater" }
+pdfcraft-updater = { workspace = true }
 # `build_info`: the version and compile-time build label for `--version` and the log.
 pdfcraft-engine = { workspace = true }
 # `owner_only`: the --control file is restricted to its user on Windows (#3922).

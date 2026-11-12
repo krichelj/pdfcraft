@@ -4830,7 +4830,7 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-updater"
-version = "0.21.0-p1"
+version = "0.21.1-p1"
 dependencies = [
  "eframe",
  "egui",
