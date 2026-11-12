@@ -35,7 +35,7 @@ pub struct Stage {
     pub detail: String,
     /// The page that shows it (a run, a pull request, a check, a release).
     pub link: Option<String>,
-    /// The pull request's checks, under "Checks".
+    /// The pull request's checks, under "Run checks".
     pub children: Vec<Stage>,
     /// How far along an active stage is, when that is known (the download).
     pub fraction: Option<f32>,
@@ -257,7 +257,8 @@ fn succeeded(conclusion: Option<&str>) -> bool {
 
 fn check_stage(c: &Check) -> Stage {
     let (state, detail) = match (c.status.as_str(), c.conclusion.as_deref()) {
-        ("completed", k) if succeeded(k) => (State::Done, k.unwrap_or("success").to_string()),
+        ("completed", Some(k @ ("skipped" | "neutral"))) => (State::Done, k.to_string()),
+        ("completed", k) if succeeded(k) => (State::Done, String::new()),
         ("completed", k) => (State::Failed, k.unwrap_or("failed").to_string()),
         (s, _) => (State::Active, s.replace('_', " ")),
     };
@@ -268,7 +269,7 @@ const ACTIONS: &str = "https://github.com/krichelj/pdfcraft/actions";
 
 /// The stages GitHub's side of Merge and update has reached (1 to 6).
 fn remote_stages(base: &str, r: &Remote) -> Vec<Stage> {
-    let titles = ["Sync upstream workflow", "Sync pull request", "Checks", "Pull request merged", "Release workflow", "Release published"];
+    let titles = ["Sync with upstream", "Open sync pull request", "Run checks", "Merge pull request", "Build release", "Publish release"];
     if let Some(p) = &r.release {
         // The release is out: whatever led to it is done (also when it was out before we looked).
         let mut done: Vec<Stage> = titles.iter().map(|t| Stage::new(t, State::Done, "", None)).collect();
@@ -276,7 +277,13 @@ fn remote_stages(base: &str, r: &Remote) -> Vec<Stage> {
             s.link = Some(run.url.clone());
         }
         if let (Some(s), Some(pr)) = (done.get_mut(1), &r.pr) {
-            s.detail = format!("#{} {}", pr.number, pr.title);
+            s.detail = format!("#{}", pr.number);
+            s.link = Some(pr.url.clone());
+        }
+        if let (Some(s), Some(pr)) = (done.get_mut(2), &r.pr) {
+            s.link = Some(format!("{}/checks", pr.url));
+        }
+        if let (Some(s), Some(pr)) = (done.get_mut(3), &r.pr) {
             s.link = Some(pr.url.clone());
         }
         if let (Some(s), Some(run)) = (done.get_mut(4), &r.release_run) {
@@ -297,7 +304,7 @@ fn remote_stages(base: &str, r: &Remote) -> Vec<Stage> {
             let k = run.conclusion.as_deref().unwrap_or("failed");
             Stage::new(titles[0], State::Failed, format!("the run ended: {k}"), Some(run.url.clone()))
         }
-        Some(run) if run.status == "completed" => Stage::new(titles[0], State::Done, "finished", Some(run.url.clone())),
+        Some(run) if run.status == "completed" => Stage::new(titles[0], State::Done, "", Some(run.url.clone())),
         Some(run) => Stage::new(titles[0], State::Done, format!("started, {}", run.status.replace('_', " ")), Some(run.url.clone())),
         None if r.pr.is_some() => Stage::new(titles[0], State::Done, "", None),
         None => Stage::new(titles[0], State::Active, waiting("waiting for the run to start"), Some(format!("{ACTIONS}/workflows/sync-upstream.yml"))),
@@ -308,7 +315,7 @@ fn remote_stages(base: &str, r: &Remote) -> Vec<Stage> {
     out.push(sync);
     // 2. Its pull request.
     let pr_stage = match &r.pr {
-        Some(pr) => Stage::new(titles[1], State::Done, format!("#{} {}", pr.number, pr.title), Some(pr.url.clone())),
+        Some(pr) => Stage::new(titles[1], State::Done, format!("#{}", pr.number), Some(pr.url.clone())),
         None if sync_finished && !sync_failed => Stage::new(
             titles[1],
             State::Failed,
@@ -327,7 +334,8 @@ fn remote_stages(base: &str, r: &Remote) -> Vec<Stage> {
         Some(pr) => {
             let link = Some(format!("{}/checks", pr.url));
             if let Some(bad) = children.iter().find(|c| c.state == State::Failed) {
-                Stage::new(titles[2], State::Failed, format!("{} {}", bad.title, bad.detail), bad.link.clone())
+                let n = children.iter().filter(|c| c.state == State::Failed).count();
+                Stage::new(titles[2], State::Failed, format!("{n} of {} failed", children.len()), bad.link.clone())
             } else if merged || (!children.is_empty() && children.iter().all(|c| c.state == State::Done)) {
                 Stage::new(titles[2], State::Done, format!("{} passed", children.len()), link)
             } else {
@@ -337,15 +345,18 @@ fn remote_stages(base: &str, r: &Remote) -> Vec<Stage> {
         }
     };
     let checks_done = checks.state == State::Done;
+    let checks_failed = checks.state == State::Failed;
     checks.children = children;
     out.push(checks);
     // 4. The merge.
     out.push(match &r.pr {
         Some(pr) if pr.merged_at.is_some() => Stage::new(titles[3], State::Done, "merged into main", Some(pr.url.clone())),
+        // Closed because a check failed: that is the failure, this only follows from it.
+        Some(pr) if pr.state == "closed" && checks_failed => Stage::new(titles[3], State::Pending, "not merged", Some(pr.url.clone())),
         Some(pr) if pr.state == "closed" => {
             Stage::new(titles[3], State::Failed, format!("#{} was closed without merging", pr.number), Some(pr.url.clone()))
         }
-        Some(pr) if checks_done => Stage::new(titles[3], State::Active, "waiting for the workflow to merge it", Some(pr.url.clone())),
+        Some(pr) if checks_done => Stage::new(titles[3], State::Active, "waiting", Some(pr.url.clone())),
         _ => Stage::new(titles[3], State::Pending, "", None),
     });
     // 5. The Release run that the merge starts.
@@ -382,12 +393,7 @@ fn megabytes(bytes: f64) -> String {
 
 /// The installer's stages (7 to 10). `ready` is whether it has something to install yet.
 fn local_stages(l: &Local, ready: bool, zip_size: Option<u64>, link: Option<&str>) -> Vec<Stage> {
-    let steps = [
-        (Step::Download, "Download"),
-        (Step::Verify, "Verify signature and version"),
-        (Step::Install, "Install"),
-        (Step::Relaunch, "Relaunch PdfCraft"),
-    ];
+    let steps = [(Step::Download, "Download"), (Step::Verify, "Verify download"), (Step::Install, "Install"), (Step::Relaunch, "Relaunch PdfCraft")];
     steps
         .iter()
         .map(|&(step, title)| {
@@ -511,14 +517,14 @@ mod tests {
         assert_eq!(
             states(&list),
             [
-                ("Sync upstream workflow", Done),
-                ("Sync pull request", Done),
-                ("Checks", Done),
-                ("Pull request merged", Active),
-                ("Release workflow", Pending),
-                ("Release published", Pending),
+                ("Sync with upstream", Done),
+                ("Open sync pull request", Done),
+                ("Run checks", Done),
+                ("Merge pull request", Active),
+                ("Build release", Pending),
+                ("Publish release", Pending),
                 ("Download", Pending),
-                ("Verify signature and version", Pending),
+                ("Verify download", Pending),
                 ("Install", Pending),
                 ("Relaunch PdfCraft", Pending),
             ]
@@ -542,12 +548,19 @@ mod tests {
         let r = Remote { pr: Some(pr), checks: checks(&fixture("checks-126.json")), ..Remote::default() };
         let list = stages(&merge("0.21.0", since), &r, &Local::default());
         let failed = failure(&list).unwrap();
-        assert_eq!(failed.title, "Checks");
-        assert_eq!(failed.detail, "test (shared code) failure");
+        assert_eq!(failed.title, "Run checks");
+        assert_eq!(failed.detail, format!("1 of {} failed", failed.children.len()));
+        assert_eq!(
+            failed.children.iter().find(|c| c.state == State::Failed).map(|c| (c.title.as_str(), c.detail.as_str())),
+            Some(("test (shared code)", "failure"))
+        );
         assert!(failed.link.as_deref().unwrap().contains("/runs/"), "{failed:?}");
-        // #126 was closed without being merged: that stage fails too.
-        assert_eq!(list[3].state, State::Failed);
-        assert!(list[3].detail.contains("closed without merging"), "{:?}", list[3]);
+        // #126 was closed without being merged because of it: not a second failure.
+        assert_eq!((list[3].state.clone(), list[3].detail.as_str()), (State::Pending, "not merged"));
+        // Closed with every check green (#126 against #134's checks): that is the failure.
+        let r = Remote { checks: checks(&fixture("checks-134.json")), ..r };
+        let list = stages(&merge("0.21.0", since), &r, &Local::default());
+        assert_eq!(failure(&list).map(|s| s.detail.as_str()), Some("#126 was closed without merging"));
     }
 
     /// Merge and update for 0.21.0, replayed from 2026-11-11 21:16: #130 merged, the Release run
@@ -606,7 +619,7 @@ mod tests {
         let list = stages(&merge("0.21.1", since), &stopped, &Local::default());
         assert_eq!(
             failure(&list).map(|s| (s.title.as_str(), s.detail.as_str())),
-            Some(("Sync upstream workflow", "the GitHub CLI (gh) isn't installed"))
+            Some(("Sync with upstream", "the GitHub CLI (gh) isn't installed"))
         );
         assert!(list[0].link.is_some(), "a failure links somewhere");
     }

@@ -2,6 +2,7 @@
 //! [`pdfcraft_updater::args::Args`].
 
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use pdfcraft_updater::args::Args;
 use pdfcraft_updater::stages;
@@ -11,21 +12,64 @@ use pdfcraft_updater::watch::{self, Model};
 struct App {
     args: Args,
     model: Arc<Mutex<Model>>,
+    icon: Option<egui::TextureHandle>,
+    details: bool,
+    /// When the update finished, for the auto-close; and when the download was first seen.
+    finished_at: Option<Instant>,
+    download_from: Option<Instant>,
+    height: f32,
 }
+
+/// A finished window closes on its own after this long, unless Details is open.
+const AUTO_CLOSE: u64 = 5;
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let list = {
+        let (list, percent, release) = {
             let m = self.model.lock().unwrap_or_else(PoisonError::into_inner);
-            stages::stages(&self.args.mode, &m.remote, &m.local)
+            (stages::stages(&self.args.mode, &m.remote, &m.local), m.local.percent, m.remote.release.as_ref().map(|r| r.version.clone()))
         };
         let ctx = ui.ctx().clone();
-        egui::CentralPanel::default().show(ui, |ui| match view::show(ui, &self.args.mode, &list) {
-            Some(Action::Open(url)) => ctx.open_url(egui::OpenUrl::new_tab(url)),
-            Some(Action::Minimize) => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
-            Some(Action::Close) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            None => {}
+        let now = Instant::now();
+        let failed = stages::failure(&list).is_some();
+        if failed && !self.details && self.finished_at.is_none() {
+            // A failure opens Details once, so the failed stage is in view.
+            self.details = true;
+            self.finished_at = Some(now);
+        }
+        let done = stages::finished(&list);
+        if done && self.finished_at.is_none() {
+            self.finished_at = Some(now);
+        }
+        if percent.is_some() && self.download_from.is_none() {
+            self.download_from = Some(now);
+        }
+        let eta = self.download_from.zip(percent).and_then(|(t, p)| view::eta(now.duration_since(t).as_secs_f32(), p));
+        let closes_in =
+            (done && !self.details).then(|| self.finished_at.map(|t| AUTO_CLOSE.saturating_sub(now.duration_since(t).as_secs()))).flatten();
+        if closes_in == Some(0) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if closes_in.is_some() || eta.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
+        let mut look = view::Look { icon: self.icon.as_ref(), details: self.details, closes_in, eta, release };
+        let mut height = 0.0;
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(ui.visuals().panel_fill)).show(ui, |ui| {
+            let action = view::show(ui, &self.args.mode, &list, &mut look);
+            height = ui.min_rect().height();
+            match action {
+                Some(Action::Open(url)) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Some(Action::Minimize) => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
+                Some(Action::Close) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                None => {}
+            }
         });
+        self.details = look.details;
+        // The window is as tall as what it shows (Details open or closed).
+        if height.is_finite() && height > 0.0 && (height - self.height).abs() > 1.0 {
+            self.height = height;
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(view::WIDTH, height)));
+        }
     }
 }
 
@@ -63,7 +107,12 @@ fn main() -> std::process::ExitCode {
     };
     let model = Arc::new(Mutex::new(Model::default()));
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("PdfCraft Updater").with_inner_size([560.0, 620.0]).with_min_inner_size([420.0, 360.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_title("PdfCraft Updater")
+            .with_inner_size([view::WIDTH, 200.0])
+            .with_resizable(false)
+            .with_maximize_button(false)
+            .with_icon(eframe::icon_data::from_png_bytes(view::ICON_PNG).unwrap_or_default()),
         ..Default::default()
     };
     let (worker_args, worker_model) = (args.clone(), Arc::clone(&model));
@@ -72,8 +121,10 @@ fn main() -> std::process::ExitCode {
         options,
         Box::new(move |cc| {
             let ctx = cc.egui_ctx.clone();
+            view::style(&ctx);
+            let icon = view::icon(&ctx);
             std::thread::spawn(move || watch::run(&worker_args, &worker_model, &move || ctx.request_repaint()));
-            Ok(Box::new(App { args, model }))
+            Ok(Box::new(App { args, model, icon, details: false, finished_at: None, download_from: None, height: 0.0 }))
         }),
     );
     let _ = std::fs::remove_file(lock);

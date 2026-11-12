@@ -23,23 +23,46 @@ fn pulls_without(drop: &[u64]) -> Result<Value, String> {
     Ok(v)
 }
 
-fn shot(out: &std::path::Path, name: &str, mode: &Mode, remote: &Remote, local: &Local) -> Result<(), String> {
+/// One state, in light and dark, with Details closed and open.
+fn shot(out: &std::path::Path, name: &str, mode: &Mode, remote: &Remote, local: &Local, eta: Option<&str>) -> Result<(), String> {
     let list = stages::stages(mode, remote, local);
-    let mode = mode.clone();
-    let mut harness = Harness::builder().with_size(egui::vec2(560.0, 640.0)).with_pixels_per_point(2.0).build_ui(move |ui| {
-        ui.ctx().set_visuals(egui::Visuals::dark());
-        egui::Frame::central_panel(ui.style()).inner_margin(12.0).show(ui, |ui| {
-            // The window's size less the frame's margins, as eframe's central panel gives it.
-            ui.set_width(536.0);
-            ui.set_height(616.0);
-            let _ = pdfcraft_updater::view::show(ui, &mode, &list);
-        });
-    });
-    harness.run_steps(4);
-    let image = harness.render()?;
-    let path = out.join(format!("{name}.png"));
-    image.save(&path).map_err(|e| e.to_string())?;
-    eprintln!("shot: wrote {}", path.display());
+    let release = remote.release.as_ref().map(|r| r.version.clone());
+    let done = stages::finished(&list);
+    for (theme, dark) in [("light", false), ("dark", true)] {
+        for details in [false, true] {
+            let (mode, list, eta, release) = (mode.clone(), list.clone(), eta.map(str::to_string), release.clone());
+            let mut icon = None;
+            let height = std::rc::Rc::new(std::cell::Cell::new(0.0_f32));
+            let h = std::rc::Rc::clone(&height);
+            let mut harness =
+                Harness::builder().with_size(egui::vec2(pdfcraft_updater::view::WIDTH, 800.0)).with_pixels_per_point(2.0).build_ui(move |ui| {
+                    ui.ctx().set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
+                    pdfcraft_updater::view::style(ui.ctx());
+                    let icon = icon.get_or_insert_with(|| pdfcraft_updater::view::icon(ui.ctx())).clone();
+                    let mut look = pdfcraft_updater::view::Look {
+                        icon: icon.as_ref(),
+                        details,
+                        closes_in: (done && !details).then_some(4),
+                        eta: eta.clone(),
+                        release: release.clone(),
+                    };
+                    let r = egui::Frame::new().fill(ui.visuals().panel_fill).show(ui, |ui| {
+                        let _ = pdfcraft_updater::view::show(ui, &mode, &list, &mut look);
+                    });
+                    h.set(r.response.rect.height());
+                });
+            harness.run_steps(4);
+            // kittest draws the ui inside an 8-point margin, cut off below.
+            harness.set_size(egui::vec2(pdfcraft_updater::view::WIDTH + 16.0, height.get() + 16.0));
+            harness.run_steps(2);
+            let image = harness.render()?;
+            let (w, h) = (image.width().saturating_sub(32), image.height().saturating_sub(32));
+            let image = image::imageops::crop_imm(&image, 16, 16, w, h).to_image();
+            let path = out.join(format!("{name}-{theme}{}.png", if details { "-details" } else { "" }));
+            image.save(&path).map_err(|e| e.to_string())?;
+            eprintln!("shot: wrote {}", path.display());
+        }
+    }
     Ok(())
 }
 
@@ -57,7 +80,7 @@ fn main() -> Result<(), String> {
         release: stages::published(&fixture("release-latest.json")?, "0.21.1"),
         ..Remote::default()
     };
-    shot(&out, "1-waiting-for-merge", &merge, &waiting, &Local::default())?;
+    shot(&out, "1-waiting-for-merge", &merge, &waiting, &Local::default(), None)?;
 
     // 2. Sync PR #126: a failed check stops the update.
     let early = "2026-11-01T00:00:00Z";
@@ -66,7 +89,7 @@ fn main() -> Result<(), String> {
         checks: stages::checks(&fixture("checks-126.json")?),
         ..Remote::default()
     };
-    shot(&out, "2-check-failed", &Mode::Merge { base: "0.21.0".into(), since: early.into() }, &failed, &Local::default())?;
+    shot(&out, "2-check-failed", &Mode::Merge { base: "0.21.0".into(), since: early.into() }, &failed, &Local::default(), None)?;
 
     // 3. The 0.21.0 merge replayed: #130 merged, v0.21.0-p1 published, the download half done.
     let since = "2026-11-11T21:16:00Z";
@@ -84,9 +107,14 @@ fn main() -> Result<(), String> {
     let mut local = Local::default();
     local.feed("==> PdfCraft 0.21.0-p1: downloading pdfcraft-0.21.0-p1-macos-aarch64.zip");
     local.feed("##################################                                   48.6%");
-    shot(&out, "3-downloading", &replay, &released, &local)?;
+    shot(&out, "3-downloading", &replay, &released, &local, pdfcraft_updater::view::eta(12.0, 48.6).as_deref())?;
 
     // 4. Installed and relaunched.
     local.step = Step::Finished;
-    shot(&out, "4-done", &replay, &released, &local)
+    let mut install = Local::default();
+    install.feed("==> PdfCraft 0.21.1-p3: downloading pdfcraft-0.21.1-p3-macos-aarch64.zip");
+    install.feed("######################################################################## 100.0%");
+    install.feed("==> verifying pdfcraft-0.21.1-p3-macos-aarch64.zip against SHA256SUMS.txt and its signature");
+    shot(&out, "5-install-verifying", &Mode::Install { version: "0.21.1-p3".into() }, &Remote::default(), &install, None)?;
+    shot(&out, "4-done", &replay, &released, &local, None)
 }
