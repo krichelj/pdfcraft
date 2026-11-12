@@ -8,6 +8,11 @@
       "reason": "Upstream storytold/pdfcraft's own layout, taken as is by every sync merge; the fork never restructures upstream's tree (CLAUDE.md fork rules)"
     },
     {
+      "rule": "map-missing-dir",
+      "path": "tests",
+      "reason": "tests/ comes from upstream storytold/pdfcraft; the fork does not restructure upstream's layout"
+    },
+    {
       "rule": "undocumented-dir",
       "path": "crates/preflight/fuzz/fuzz_targets",
       "reason": "upstream storytold/pdfcraft code; the fork takes upstream's tree unchanged"

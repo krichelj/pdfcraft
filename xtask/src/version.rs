@@ -15,14 +15,15 @@ pub fn read(manifest: &str) -> Result<String, String> {
     Ok(v)
 }
 
-/// `manifest` with the workspace version replaced, together with the matching `version` of every
-/// path dependency in `[workspace.dependencies]` (the workspace's own crates, which must agree
-/// with it or `cargo update` refuses them); everything else is byte-for-byte unchanged.
+/// `manifest` with the workspace version replaced, together with the full `X.Y.Z[-pre]` pin of
+/// every path dependency in `[workspace.dependencies]` (the workspace's own crates, which must
+/// agree with it or `cargo update` refuses a prerelease). A pin moves even when it differs from
+/// the old version: upstream bumped 0.21.1 without its pins (still `0.21.0`), which `^0.21.0`
+/// accepts but `0.21.1-p1` does not. Everything else is byte-for-byte unchanged.
 pub fn replace(manifest: &str, new: &str) -> Result<String, String> {
     validate(new)?;
-    let old = read(manifest)?;
     let (idx, _) = find_line(manifest)?;
-    let (old_pin, new_pin) = (format!("version = \"{old}\""), format!("version = \"{new}\""));
+    let new_pin = format!("version = \"{new}\"");
     let mut out = String::with_capacity(manifest.len() + 8);
     let mut in_deps = false;
     for (i, line) in manifest.split_inclusive('\n').enumerate() {
@@ -39,13 +40,23 @@ pub fn replace(manifest: &str, new: &str) -> Result<String, String> {
                 ""
             };
             out.push_str(&format!("version = \"{new}\"{eol}"));
-        } else if in_deps && line.contains("path = \"") && line.contains(&old_pin) {
-            out.push_str(&line.replace(&old_pin, &new_pin));
+        } else if in_deps
+            && line.contains("path = \"")
+            && let Some(pin) = full_pin(line)
+        {
+            out.push_str(&line.replacen(&format!("version = \"{pin}\""), &new_pin, 1));
         } else {
             out.push_str(line);
         }
     }
     Ok(out)
+}
+
+/// The `version = "…"` value on `line` when it is a full version (a `0.2` range is left alone).
+fn full_pin(line: &str) -> Option<&str> {
+    let (_, rest) = line.split_once("version = \"")?;
+    let (pin, _) = rest.split_once('"')?;
+    validate(pin).ok().map(|()| pin)
 }
 
 /// Semver without build metadata: `MAJOR.MINOR.PATCH` plus an optional `-pre.release` tag.
@@ -147,11 +158,13 @@ mod tests {
         let manifest = "[workspace.package]\nversion = \"0.1.0\"\n\n[workspace.dependencies]\n\
                         own = { path = \"crates/own\", version = \"0.1.0\" }\n\
                         dep = { version = \"0.1.0\" }\n\
-                        other = { path = \"crates/other\", version = \"0.2\" }\n";
+                        other = { path = \"crates/other\", version = \"0.2\" }\n\
+                        stale = { path = \"crates/stale\", version = \"0.0.9\" }\n";
         let out = replace(manifest, "0.2.0").unwrap();
         assert!(out.contains("own = { path = \"crates/own\", version = \"0.2.0\" }"), "{out}");
         assert!(out.contains("dep = { version = \"0.1.0\" }"), "a registry dependency keeps its version");
         assert!(out.contains("other = { path = \"crates/other\", version = \"0.2\" }"));
+        assert!(out.contains("stale = { path = \"crates/stale\", version = \"0.2.0\" }"), "a pin upstream left behind moves too: {out}");
     }
 
     #[test]
