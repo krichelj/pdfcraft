@@ -4275,6 +4275,7 @@ dependencies = [
  "pdfcraft-engine",
  "pdfcraft-platform",
  "pdfcraft-ui-egui",
+ "pdfcraft-updater",
  "pollster 1.0.1",
  "raw-window-handle",
  "rustls-native-certs",
@@ -4825,6 +4826,18 @@ dependencies = [
  "winsafe",
  "xattr",
  "zeroize",
+]
+
+[[package]]
+name = "pdfcraft-updater"
+version = "0.21.1-p1"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui_kittest",
+ "image",
+ "log",
+ "serde_json",
 ]
 
 [[package]]

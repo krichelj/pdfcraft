@@ -17,7 +17,9 @@
 # Only this fork's builds are installed: the original PdfCraft's would replace the fork's changes.
 # When the original has a newer release, Check for updates > Merge and update starts the fork's
 # Sync upstream workflow (which merges it into the fork, tests it and releases <its version>-p1)
-# and runs this script with PDFCRAFT_AWAIT_BASE set to that version: it waits until the fork's
+# and opens PdfCraft Updater (Contents/Helpers), which shows the merge's stages and then runs this
+# script with PDFCRAFT_VERSION set to that release. A bundle without the helper runs this script
+# with PDFCRAFT_AWAIT_BASE set to that version instead: it waits until the fork's
 # latest release is built on it, then always asks whether to install it now (Later, or no answer
 # within an hour, leaves everything as it is; Check for updates offers the release afterwards).
 #
@@ -34,6 +36,8 @@
 #      PDFCRAFT_AWAIT_SECS   how long to wait for that release (default 21600, six hours)
 #      PDFCRAFT_AWAIT_POLL   seconds between looks at the latest release (default 60)
 #      PDFCRAFT_LOCK         the installers' lock (default: $TMPDIR/pdfcraft-installer.lock, per user)
+# Lines starting "==> " are the stages PdfCraft Updater shows (apps/pdfcraft-updater/src/stages.rs
+# Local::feed): keep their wording.
 set -euo pipefail
 REPO=krichelj/pdfcraft
 APPS="${PDFCRAFT_APPS:-/Applications}"
@@ -163,6 +167,7 @@ work="$(mktemp -d)"
 echo "==> PdfCraft $version: downloading $zip"
 curl -fsSL -o "$work/SHA256SUMS.txt" "$base/SHA256SUMS.txt" || die "couldn't download $base/SHA256SUMS.txt"
 curl -fSL --progress-bar -o "$work/$zip" "$base/$zip" || die "couldn't download $base/$zip"
+echo "==> verifying $zip against SHA256SUMS.txt and its signature"
 want="$(awk -v f="$zip" '$2 == f || $2 == "*" f { print $1 }' "$work/SHA256SUMS.txt")"
 [ -n "$want" ] || die "SHA256SUMS.txt doesn't list $zip"
 got="$(shasum -a 256 "$work/$zip" | awk '{ print $1 }')"
@@ -225,6 +230,7 @@ if [ -z "$WAIT_PID" ] && pgrep -xq PdfCraft; then
   done
 fi
 
+echo "==> installing PdfCraft $version in $APPS"
 mkdir -p "$APPS"
 [ -w "$APPS" ] || die "can't write to $APPS; run this as an admin user, or set PDFCRAFT_APPS=\$HOME/Applications"
 dest="$APPS/PdfCraft.app"
@@ -243,4 +249,4 @@ fi
 xattr -dr com.apple.quarantine "$dest" 2>/dev/null || true
 
 echo "==> PdfCraft $version is installed in $dest"
-[ "${PDFCRAFT_NO_OPEN:-}" = 1 ] || open "$dest"
+[ "${PDFCRAFT_NO_OPEN:-}" = 1 ] || { echo "==> relaunching PdfCraft"; open "$dest"; }

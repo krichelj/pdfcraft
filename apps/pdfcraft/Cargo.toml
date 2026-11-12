@@ -4,6 +4,9 @@ description = "PdfCraft desktop app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# Never published to crates.io; lets it use the fork-only pdfcraft-updater by path alone, with no
+# workspace entry that a sync of upstream's root Cargo.toml would drop (cargo-deny wildcards).
+publish = false
 
 [lints]
 workspace = true
@@ -15,6 +18,8 @@ workspace = true
 ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "_ring"] }
 rustls-native-certs = "0.8"
 pdfcraft-ui-egui = { workspace = true }
+# The fork's updater app: its command line, the GitHub CLI and the stages (Help > Check for updates).
+pdfcraft-updater = { path = "../pdfcraft-updater" }
 # `build_info`: the version and compile-time build label for `--version` and the log.
 pdfcraft-engine = { workspace = true }
 # `owner_only`: the --control file is restricted to its user on Windows (#3922).

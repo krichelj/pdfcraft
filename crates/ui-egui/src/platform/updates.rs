@@ -85,9 +85,10 @@ pub enum Install {
     /// Install and relaunch: the fork's release with this tag (`v0.8.0-p1`). The installer
     /// downloads and checks it, waits for this app to quit, puts it in place and opens it.
     Release(String),
-    /// Merge and update: wait, in the background, for the fork's release built on the original
-    /// PdfCraft's version with this tag (`v0.12.0`), then ask whether to install it. The app keeps
-    /// running meanwhile.
+    /// Merge and update: follow the fork's merge of the original PdfCraft's version with this tag
+    /// (`v0.12.0`) to the release built on it, then install it. The app keeps running meanwhile.
+    /// An installed app opens PdfCraft Updater (apps/pdfcraft-updater) for both, which shows each
+    /// stage in its own window and outlives this app.
     AfterMerge(String),
 }
 

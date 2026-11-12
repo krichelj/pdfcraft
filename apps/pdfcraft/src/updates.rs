@@ -1,11 +1,13 @@
 //! Asks GitHub for the latest PdfCraft releases, installs the fork's, and starts the fork's merge
 //! of a newer original PdfCraft (Help ▸ Check for updates, issue #28).
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use pdfcraft_ui_egui::updates::{Install, Latest, RELEASES_PAGE, Release, UPSTREAM_RELEASES_PAGE};
+pub use pdfcraft_updater::gh::trigger_sync;
+use pdfcraft_updater::gh::{INSTALLER_LOCK, alive};
+use pdfcraft_updater::stages::Mode;
 
 // The fork's releases (krichelj/pdfcraft), not upstream's: see `RELEASES_PAGE`. The page, not
 // the REST API: GitHub allows 60 anonymous API requests an hour per address, which everyone on a
@@ -137,7 +139,14 @@ pub struct Installer {
     /// The installers' lock (`PDFCRAFT_LOCK`): a symbolic link to the running installer's
     /// process id, so one installer runs at a time and this app can tell one is pending.
     lock: PathBuf,
+    /// PdfCraft Updater (`Contents/Helpers/PdfCraft Updater.app`), which shows each stage of the
+    /// update in its own window. A bundle without it runs the installer hidden, as before.
+    updater: Option<PathBuf>,
 }
+
+/// How far before Merge and update's click the Sync upstream run it started may be dated:
+/// GitHub stamps the run when it queues it, and clocks differ a little.
+const SINCE_MARGIN: chrono::TimeDelta = chrono::TimeDelta::seconds(120);
 
 impl Installer {
     /// The bundled installer, when `exe` (the running binary) is `…/PdfCraft.app/Contents/MacOS/…`
@@ -155,7 +164,26 @@ impl Installer {
             // The same path install.sh uses by default ($TMPDIR is per user on macOS), so the
             // curl one-liner and the app's installers share one lock.
             lock: std::env::temp_dir().join(INSTALLER_LOCK),
+            updater: Some(contents.join("Helpers").join(pdfcraft_updater::HELPER_APP))
+                .filter(|a| a.join("Contents").join("MacOS").join("pdfcraft-updater").is_file()),
         })
+    }
+
+    /// The command that opens PdfCraft Updater for `what` as an app of its own (`open -a`), so it
+    /// keeps running when PdfCraft quits. `pid` is this app's process, `now` the click's time.
+    fn updater_command(&self, updater: &Path, what: &Install, pid: u32, now: chrono::DateTime<chrono::Utc>) -> Result<std::process::Command, String> {
+        let mode = match what {
+            Install::Release(tag) => Mode::Install { version: tag_version(tag)?.to_string() },
+            Install::AfterMerge(tag) => {
+                let since = now.checked_sub_signed(SINCE_MARGIN).unwrap_or(now);
+                Mode::Merge { base: upstream_base(tag)?.to_string(), since: since.format("%Y-%m-%dT%H:%M:%SZ").to_string() }
+            }
+        };
+        let wait_pid = matches!(what, Install::Release(_)).then_some(pid);
+        let args = pdfcraft_updater::args::Args { mode, wait_pid, installer: self.script.clone(), apps: self.apps.clone(), log: self.log.clone() };
+        let mut c = std::process::Command::new("/usr/bin/open");
+        c.arg("-a").arg(updater).arg("--args").args(args.to_args()).stdin(std::process::Stdio::null());
+        Ok(c)
     }
 
     /// The installer's command. Install and relaunch passes the release and this app's `pid`,
@@ -175,13 +203,25 @@ impl Installer {
     /// Whether an installer is running: Install and relaunch, or Merge and update's installer
     /// waiting for its release. The Updates dialog offers no second installer meanwhile.
     pub fn busy(&self) -> bool {
-        let Ok(target) = std::fs::read_link(&self.lock) else { return false };
-        let Ok(pid) = target.to_string_lossy().parse::<u32>() else { return false };
-        alive(pid)
+        let updater_lock = self.lock.with_file_name(pdfcraft_updater::UPDATER_LOCK);
+        [&self.lock, &updater_lock].iter().any(|lock| {
+            let Ok(target) = std::fs::read_link(lock) else { return false };
+            target.to_string_lossy().parse::<u32>().is_ok_and(alive)
+        })
     }
 
     /// Start the installer in the background; it outlives this app.
     pub fn start(&self, what: &Install) -> Result<(), String> {
+        if let Some(updater) = &self.updater {
+            let mut c = self.updater_command(updater, what, std::process::id(), chrono::Utc::now())?;
+            // `open` hands the app to Launch Services and returns at once.
+            let status = c.status().map_err(|e| format!("couldn't open PdfCraft Updater ({e})"))?;
+            if !status.success() {
+                return Err(format!("couldn't open PdfCraft Updater (open exited with {status})"));
+            }
+            log::info!("update ({what:?}): PdfCraft Updater opened; installer output in {}", self.log.display());
+            return Ok(());
+        }
         let mut c = self.command(what, std::process::id())?;
         if let Some(dir) = self.log.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("couldn't create {} ({e})", dir.display()))?;
@@ -199,209 +239,6 @@ impl Installer {
         let child = c.spawn().map_err(|e| format!("couldn't start the installer ({e})"))?;
         log::info!("update ({what:?}): installer started (pid {}), output in {}", child.id(), self.log.display());
         Ok(())
-    }
-}
-
-/// The fork whose Sync upstream workflow merges the original PdfCraft in
-/// (`.github/workflows/sync-upstream.yml`).
-const FORK_REPO: &str = "krichelj/pdfcraft";
-const SYNC_WORKFLOW: &str = "sync-upstream.yml";
-/// How long the GitHub CLI may take to find itself or start the workflow.
-const GH_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Merge and update: start the fork's Sync upstream workflow with the GitHub CLI and the user's
-/// own sign-in (`gh auth login`). Runs on the dialog's background thread.
-pub fn trigger_sync() -> Result<(), String> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    GitHubCli::find(&GitHubCli::usual_places(home.as_deref()), Path::new("/bin/zsh"))?.run_sync(GH_TIMEOUT)
-}
-
-/// The GitHub CLI (`gh`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GitHubCli {
-    program: PathBuf,
-}
-
-impl GitHubCli {
-    /// Where `gh` usually is on a Mac: Homebrew on Apple silicon and on Intel, and a per-user
-    /// install. An app opened from the Dock or Finder doesn't get the shell's PATH.
-    pub fn usual_places(home: Option<&Path>) -> Vec<PathBuf> {
-        let mut places = vec![PathBuf::from("/opt/homebrew/bin/gh"), PathBuf::from("/usr/local/bin/gh")];
-        places.extend(home.map(|h| h.join(".local").join("bin").join("gh")));
-        places
-    }
-
-    /// The first executable in `places`, else whatever the user's login `shell` finds on its PATH.
-    fn find(places: &[PathBuf], shell: &Path) -> Result<GitHubCli, String> {
-        if let Some(program) = places.iter().find(|p| executable(p)) {
-            return Ok(GitHubCli { program: program.clone() });
-        }
-        let mut lookup = std::process::Command::new(shell);
-        lookup.args(["-lc", "command -v gh"]);
-        if let Ok(out) = run_for(lookup, GH_TIMEOUT)
-            && out.status.success()
-        {
-            // A login profile may print first (a banner, a fortune): the answer is the last line.
-            let text = String::from_utf8_lossy(&out.stdout);
-            let found = text.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(PathBuf::from);
-            if let Some(found) = found
-                && found.is_absolute()
-                && executable(&found)
-            {
-                return Ok(GitHubCli { program: found });
-            }
-        }
-        Err("the GitHub CLI (gh) isn't installed; install it with `brew install gh` and sign in with `gh auth login`".into())
-    }
-
-    /// `gh workflow run sync-upstream.yml -R krichelj/pdfcraft`.
-    fn sync_command(&self) -> std::process::Command {
-        let mut c = std::process::Command::new(&self.program);
-        c.args(["workflow", "run", SYNC_WORKFLOW, "-R", FORK_REPO]).stdin(std::process::Stdio::null());
-        c
-    }
-
-    fn run_sync(&self, timeout: Duration) -> Result<(), String> {
-        let out = run_for(self.sync_command(), timeout)?;
-        if out.status.success() {
-            log::info!("update: started {FORK_REPO}'s {SYNC_WORKFLOW} with {}", self.program.display());
-            return Ok(());
-        }
-        let said = String::from_utf8_lossy(&out.stderr);
-        let said = said.trim();
-        let said: String = said.chars().take(300).collect();
-        Err(if said.is_empty() { format!("gh exited with {}", out.status) } else { format!("gh: {said}") })
-    }
-}
-
-/// The installers' lock, in the temporary folder (install.sh's default `PDFCRAFT_LOCK`).
-const INSTALLER_LOCK: &str = "pdfcraft-installer.lock";
-
-/// Whether process `pid` is running (`kill -0`, which signals nothing).
-fn alive(pid: u32) -> bool {
-    std::process::Command::new("/bin/kill")
-        .args(["-0", &pid.to_string()])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
-}
-
-/// Whether `path` is a file this user may run.
-fn executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-    }
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
-}
-
-/// What a finished program wrote is still in its pipes when it exits; this is how long to wait for
-/// it, past the exit, before giving up on anything it started that keeps the pipes open.
-const OUTPUT_GRACE: Duration = Duration::from_secs(2);
-/// The most of each stream kept: enough for any message gh prints.
-const OUTPUT_LIMIT: usize = 64 * 1024;
-
-/// One read from a child's stdout (`false`) or stderr (`true`); `None` when that stream closed.
-type Chunk = (bool, Option<Vec<u8>>);
-
-/// Run `command` to its end, or kill it after `timeout`. Its output is read while it runs, so a
-/// chatty command can't fill the pipe and stall. The timeout bounds the whole call: a program
-/// that exits while something it started still holds its output open (a login shell's background
-/// job) is waited on for at most [`OUTPUT_GRACE`] more, never for that job.
-fn run_for(mut command: std::process::Command, timeout: Duration) -> Result<std::process::Output, String> {
-    let name = command.get_program().to_string_lossy().into_owned();
-    let deadline = Instant::now().checked_add(timeout).ok_or_else(|| format!("a timeout of {timeout:?} is too long"))?;
-    let mut child = command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("couldn't run {name} ({e})"))?;
-    let (tx, rx) = std::sync::mpsc::channel::<Chunk>();
-    read_into(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), false, tx.clone());
-    read_into(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>), true, tx);
-    let mut collected = Collected::default();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => {
-                // Waits at most 20 ms: the pause between looks, spent reading what arrives.
-                collected.take(&rx, Duration::from_millis(20));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("{name} didn't finish within {}s", timeout.as_secs()));
-            }
-            Err(e) => return Err(format!("couldn't wait for {name} ({e})")),
-        }
-    };
-    let grace_end = Instant::now().checked_add(OUTPUT_GRACE).map_or(deadline, |g| deadline.min(g));
-    while !collected.both_closed() {
-        let Some(left) = grace_end.checked_duration_since(Instant::now()) else { break };
-        if left.is_zero() || !collected.take(&rx, left) {
-            break;
-        }
-    }
-    Ok(std::process::Output { status, stdout: collected.out, stderr: collected.err })
-}
-
-/// Read `pipe` on its own thread, sending each chunk and then `None` when it closes. The thread
-/// ends with the pipe; nobody waits for it.
-fn read_into(pipe: Option<Box<dyn Read + Send>>, is_err: bool, tx: std::sync::mpsc::Sender<Chunk>) {
-    let Some(mut pipe) = pipe else {
-        let _ = tx.send((is_err, None));
-        return;
-    };
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        loop {
-            match pipe.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if tx.send((is_err, Some(buf.get(..n).unwrap_or_default().to_vec()))).is_err() {
-                        return; // the caller stopped listening
-                    }
-                }
-            }
-        }
-        let _ = tx.send((is_err, None));
-    });
-}
-
-/// A child's output as it arrives, each stream kept up to [`OUTPUT_LIMIT`].
-#[derive(Default)]
-struct Collected {
-    out: Vec<u8>,
-    err: Vec<u8>,
-    closed: u8,
-}
-
-impl Collected {
-    /// Take one chunk, waiting at most `wait`. False when none came (or no reader is left).
-    fn take(&mut self, rx: &std::sync::mpsc::Receiver<Chunk>, wait: Duration) -> bool {
-        match rx.recv_timeout(wait) {
-            Ok((is_err, Some(bytes))) => {
-                let into = if is_err { &mut self.err } else { &mut self.out };
-                let room = OUTPUT_LIMIT.saturating_sub(into.len());
-                into.extend(bytes.iter().take(room));
-                true
-            }
-            Ok((_, None)) => {
-                self.closed = self.closed.saturating_add(1);
-                true
-            }
-            Err(_) => false,
-        }
-    }
-
-    fn both_closed(&self) -> bool {
-        self.closed >= 2
     }
 }
 
@@ -455,6 +292,12 @@ mod tests {
         let i = Installer::bundled(&exe, logs).expect("inside PdfCraft.app with its installer");
         assert_eq!(i.apps, root.join("Applications"));
         assert_eq!(i.log, logs.join("update.log"));
+        assert_eq!(i.updater, None, "no helper app in this bundle");
+        let helper = root.join("Applications/PdfCraft.app/Contents/Helpers/PdfCraft Updater.app/Contents/MacOS");
+        std::fs::create_dir_all(&helper).unwrap();
+        std::fs::write(helper.join("pdfcraft-updater"), b"").unwrap();
+        let with = Installer::bundled(&exe, logs).unwrap();
+        assert_eq!(with.updater, Some(root.join("Applications/PdfCraft.app/Contents/Helpers/PdfCraft Updater.app")));
         let (root2, exe2) = bundle("no-script", false);
         assert_eq!(Installer::bundled(&exe2, logs), None, "a bundle without install.sh");
         assert_eq!(Installer::bundled(Path::new("/usr/local/bin/pdfcraft"), logs), None, "not a bundle");
@@ -475,6 +318,31 @@ mod tests {
             apps: "/A".into(),
             log: "/l/update.log".into(),
             lock: "/t/pdfcraft-installer.lock".into(),
+            updater: None,
+        }
+    }
+
+    #[test]
+    fn the_updater_is_opened_as_its_own_app_with_what_to_follow() {
+        use chrono::TimeZone;
+        let i = installer();
+        let app = Path::new("/A/PdfCraft.app/Contents/Helpers/PdfCraft Updater.app");
+        let now = chrono::Utc.with_ymd_and_hms(2026, 11, 12, 21, 15, 0).unwrap();
+        let c = i.updater_command(app, &Install::AfterMerge("v0.21.1".into()), 4242, now).unwrap();
+        assert_eq!(c.get_program(), "/usr/bin/open");
+        let a: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(a[..3], ["-a", "/A/PdfCraft.app/Contents/Helpers/PdfCraft Updater.app", "--args"]);
+        let parsed = pdfcraft_updater::args::Args::parse(c.get_args().skip(3).map(std::ffi::OsStr::to_os_string)).unwrap();
+        // The run the click starts is found from two minutes before it; nothing waits for PdfCraft.
+        assert_eq!(parsed.mode, Mode::Merge { base: "0.21.1".into(), since: "2026-11-12T21:13:00Z".into() });
+        assert_eq!(parsed.wait_pid, None);
+        assert_eq!(parsed.installer, Path::new("/A/PdfCraft.app/Contents/Resources/install.sh"));
+        let c = i.updater_command(app, &Install::Release("v0.21.1-p1".into()), 4242, now).unwrap();
+        let parsed = pdfcraft_updater::args::Args::parse(c.get_args().skip(3).map(std::ffi::OsStr::to_os_string)).unwrap();
+        assert_eq!(parsed.mode, Mode::Install { version: "0.21.1-p1".into() });
+        assert_eq!(parsed.wait_pid, Some(4242), "Install and relaunch waits for PdfCraft to quit");
+        for bad in [Install::Release("$(id)".into()), Install::AfterMerge("v0.21".into())] {
+            assert!(i.updater_command(app, &bad, 1, now).is_err(), "{bad:?}");
         }
     }
 
@@ -512,118 +380,12 @@ mod tests {
         }
     }
 
-    /// Held while a test writes fake programs and runs them. A child forked by another test thread
-    /// while a script is still open for writing makes its exec fail with "Text file busy".
-    #[cfg(unix)]
-    static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[cfg(unix)]
-    fn exec_lock() -> std::sync::MutexGuard<'static, ()> {
-        EXEC.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// A temporary folder for fake programs.
-    #[cfg(unix)]
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pdfcraft-gh-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    /// An executable shell script at `path`.
-    #[cfg(unix)]
-    fn script(path: &Path, body: &str) {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_github_cli_is_found_where_macs_keep_it_then_on_the_login_path() {
-        let _exec = exec_lock();
-        let dir = scratch("find");
-        let missing = dir.join("missing-gh");
-        let not_executable = dir.join("plain-gh");
-        std::fs::write(&not_executable, "").unwrap();
-        let gh = dir.join("gh");
-        script(&gh, "exit 0");
-        let no_shell = dir.join("no-shell");
-        let found = GitHubCli::find(&[missing.clone(), not_executable.clone(), gh.clone()], &no_shell).unwrap();
-        assert_eq!(found.program, gh, "the first executable place");
-        // Nowhere usual: the login shell's PATH.
-        let shell = dir.join("zsh");
-        script(&shell, &format!("[ \"$1\" = -lc ] && [ \"$2\" = 'command -v gh' ] && echo '{}'", gh.display()));
-        assert_eq!(GitHubCli::find(std::slice::from_ref(&missing), &shell).unwrap().program, gh);
-        // A login profile that prints a banner first: the answer is the last line.
-        let chatty_shell = dir.join("chatty-zsh");
-        script(&chatty_shell, &format!("echo 'Welcome back'; echo; echo '{}'", gh.display()));
-        assert_eq!(GitHubCli::find(std::slice::from_ref(&missing), &chatty_shell).unwrap().program, gh);
-        // A shell that finds nothing, or names something that isn't a program.
-        let empty_shell = dir.join("empty-zsh");
-        script(&empty_shell, "exit 1");
-        let liar_shell = dir.join("liar-zsh");
-        script(&liar_shell, &format!("echo '{}'", not_executable.display()));
-        for shell in [&empty_shell, &liar_shell, &no_shell] {
-            let err = GitHubCli::find(std::slice::from_ref(&missing), shell).unwrap_err();
-            assert!(err.contains("isn't installed") && err.contains("gh auth login"), "{err}");
-        }
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_sync_workflow_is_started_on_the_fork_and_failures_say_why() {
-        let _exec = exec_lock();
-        let dir = scratch("run");
-        let args = dir.join("args");
-        let gh = dir.join("gh");
-        script(&gh, &format!("printf '%s\\n' \"$@\" > '{}'", args.display()));
-        let cli = GitHubCli { program: gh.clone() };
-        cli.run_sync(Duration::from_secs(20)).unwrap();
-        assert_eq!(std::fs::read_to_string(&args).unwrap(), "workflow\nrun\nsync-upstream.yml\n-R\nkrichelj/pdfcraft\n");
-
-        script(&gh, "echo 'HTTP 403: Must have admin rights to Repository.' >&2; exit 1");
-        assert_eq!(cli.run_sync(Duration::from_secs(20)), Err("gh: HTTP 403: Must have admin rights to Repository.".into()));
-        script(&gh, "exit 4");
-        let err = cli.run_sync(Duration::from_secs(20)).unwrap_err();
-        assert!(err.starts_with("gh exited with"), "{err}");
-        // A gh that hangs (no network, a login prompt) is stopped, not waited on forever.
-        script(&gh, "sleep 30");
-        let started = Instant::now();
-        let err = cli.run_sync(Duration::from_millis(300)).unwrap_err();
-        assert!(err.contains("didn't finish"), "{err}");
-        assert!(started.elapsed() < Duration::from_secs(10), "killed at the deadline");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    /// A login shell's background job keeps the output pipe open after the shell exits: the
-    /// answer still comes back within the timeout, not when the job ends.
-    #[cfg(unix)]
-    #[test]
-    fn a_job_left_holding_the_output_does_not_hold_up_the_answer() {
-        let _exec = exec_lock();
-        let mut c = std::process::Command::new("/bin/sh");
-        c.args(["-c", "sleep 8 & echo /opt/homebrew/bin/gh"]);
-        let started = Instant::now();
-        let out = run_for(c, Duration::from_secs(30)).unwrap();
-        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
-        assert!(out.status.success());
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/opt/homebrew/bin/gh");
-        // And the timeout still bounds a job that runs past it while holding the pipe.
-        let mut c = std::process::Command::new("/bin/sh");
-        c.args(["-c", "sleep 8 & sleep 8"]);
-        let started = Instant::now();
-        assert!(run_for(c, Duration::from_millis(300)).unwrap_err().contains("didn't finish"));
-        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
-    }
-
     #[cfg(unix)]
     #[test]
     fn a_running_installer_is_seen_through_its_lock() {
-        let _exec = exec_lock();
-        let dir = scratch("lock");
+        let dir = std::env::temp_dir().join(format!("pdfcraft-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
         let lock = dir.join(INSTALLER_LOCK);
         let i = Installer { lock: lock.clone(), ..installer() };
         assert!(!i.busy(), "no lock");
@@ -638,6 +400,11 @@ mod tests {
         std::fs::remove_file(&lock).unwrap();
         std::os::unix::fs::symlink("not-a-pid", &lock).unwrap();
         assert!(!i.busy(), "a lock that names no process");
+        // PdfCraft Updater following a merge holds its own lock beside the installers'.
+        let updater_lock = dir.join(pdfcraft_updater::UPDATER_LOCK);
+        std::os::unix::fs::symlink(std::process::id().to_string(), &updater_lock).unwrap();
+        assert!(i.busy(), "a live updater");
+        std::fs::remove_file(&updater_lock).unwrap();
         let _ = std::fs::remove_dir_all(dir);
     }
 

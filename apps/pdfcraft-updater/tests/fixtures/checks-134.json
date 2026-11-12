@@ -1,0 +1,39 @@
+{
+  "check_runs": [
+    {
+      "id": 131499612006,
+      "name": "dependency licences and advisories",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43143896639/job/131499612006"
+    },
+    {
+      "id": 131499609940,
+      "name": "fuzz (mutation, 15 min)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43143896639/job/131499609940"
+    },
+    {
+      "id": 131499607122,
+      "name": "test (shared code)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43143896639/job/131499607122"
+    },
+    {
+      "id": 130937096182,
+      "name": "merge when green",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43143896770/job/130937096182"
+    },
+    {
+      "id": 130937094170,
+      "name": "lint",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43143896622/job/130937094170"
+    }
+  ]
+}

@@ -58,12 +58,12 @@ echo "==> PdfCraft $VERSION for macOS ($ARCH), identity: $IDENTITY, notarize: $N
 if [[ "$SKIP_BUILD" = 0 ]]; then
   args=()
   for t in "${TARGETS[@]}"; do args+=(--target "$t"); done
-  (cd "$ROOT" && cargo build --release --locked -p pdfcraft -p pdfcraft-cli "${args[@]}")
+  (cd "$ROOT" && cargo build --release --locked -p pdfcraft -p pdfcraft-cli -p pdfcraft-updater "${args[@]}")
 fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/bin"
-for bin in pdfcraft pdfcraft-cli; do
+for bin in pdfcraft pdfcraft-cli pdfcraft-updater; do
   inputs=()
   for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/$bin"); done
   lipo -create -output "$WORK/bin/$bin" "${inputs[@]}"
@@ -134,9 +134,13 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"
+# Help > Check for updates opens this helper app to show the update's stages.
+UPDATER="$("$HERE/bundle-updater.sh" "$WORK/bin/pdfcraft-updater" "$APP" "$VERSION")"
+plutil -lint "$UPDATER/Contents/Info.plist"
 
 # Sign inside-out: nested code first, then the bundle itself (no --deep on the final signature).
-# Today the only nested code is the main executable; frameworks/helpers would be signed here too.
+sign --options runtime "$UPDATER/Contents/MacOS/pdfcraft-updater"
+sign --options runtime "$UPDATER"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/PdfCraft"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
