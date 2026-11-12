@@ -1,0 +1,46 @@
+{
+  "check_runs": [
+    {
+      "id": 130795265463,
+      "name": "lint",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43101901542/job/130795265463"
+    },
+    {
+      "id": 130795244418,
+      "name": "test (shared code)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43101901548/job/130795244418"
+    },
+    {
+      "id": 130795239231,
+      "name": "fuzz (mutation, 15 min)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43101901548/job/130795239231"
+    },
+    {
+      "id": 130795239127,
+      "name": "merge when green",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43101901475/job/130795239127"
+    },
+    {
+      "id": 130795237249,
+      "name": "dependency licences and advisories",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43101901548/job/130795237249"
+    },
+    {
+      "id": 130795237034,
+      "name": "sync and release scenarios",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/krichelj/pdfcraft/actions/runs/43101901489/job/130795237034"
+    }
+  ]
+}

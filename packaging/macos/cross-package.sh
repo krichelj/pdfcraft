@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cross-build the Apple Silicon (M1 and later) macOS artifacts on a Linux host:
 #
-#   $DIST/pdfcraft-<version>-macos-aarch64.dmg       PdfCraft.app on a drag-to-Applications DMG
+#   $DIST/pdfcraft-<version>-macos-aarch64.dmg       PdfCraft.app (with PdfCraft Updater inside) on a DMG
 #   $DIST/pdfcraft-<version>-macos-aarch64.zip       PdfCraft.app, ad-hoc signed
 #   $DIST/pdfcraft-cli-<version>-macos-aarch64.zip   the headless CLI
 #
@@ -42,7 +42,7 @@ DMG="$DIST/pdfcraft-$VERSION-macos-aarch64.dmg"
 CLI_ZIP="$DIST/pdfcraft-cli-$VERSION-macos-aarch64.zip"
 
 echo "==> PdfCraft $VERSION for macOS ($TARGET), cross-built on $(hostname)"
-(cd "$ROOT" && cargo zigbuild --release --locked -p pdfcraft -p pdfcraft-cli --target "$TARGET")
+(cd "$ROOT" && cargo zigbuild --release --locked -p pdfcraft -p pdfcraft-cli -p pdfcraft-updater --target "$TARGET")
 BIN="$CARGO_TARGET_DIR/$TARGET/release"
 
 rm -rf "$WORK"
@@ -57,11 +57,17 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
 python3 -c 'import plistlib,sys; plistlib.load(open(sys.argv[1],"rb"))' "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"
+# Help > Check for updates opens this helper app to show the update's stages.
+UPDATER="$("$HERE/bundle-updater.sh" "$BIN/pdfcraft-updater" "$APP" "$VERSION")"
+python3 -c 'import plistlib,sys; plistlib.load(open(sys.argv[1],"rb"))' "$UPDATER/Contents/Info.plist"
 
-# Ad-hoc signature (no certificate): Apple Silicon refuses to run unsigned arm64 code.
+# Ad-hoc signature (no certificate): Apple Silicon refuses to run unsigned arm64 code. The helper
+# first, then the bundle that seals it.
+rcodesign sign --code-signature-flags runtime "$UPDATER"
 rcodesign sign --code-signature-flags runtime --entitlements-xml-file "$HERE/entitlements.plist" "$APP"
 # `rcodesign verify` rejects ad-hoc signatures (no CMS blob); check the signature is there instead.
 rcodesign print-signature-info "$APP/Contents/MacOS/PdfCraft" | grep -q "code_directory"
+rcodesign print-signature-info "$UPDATER/Contents/MacOS/pdfcraft-updater" | grep -q "code_directory"
 
 rm -f "$APP_ZIP"
 (cd "$WORK" && zip -qry "$APP_ZIP" PdfCraft.app)

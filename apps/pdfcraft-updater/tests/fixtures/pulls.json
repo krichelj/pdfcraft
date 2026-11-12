@@ -1,0 +1,132 @@
+[
+  {
+    "number": 134,
+    "title": "Sync upstream: storytold/pdfcraft v0.21.1@b503b2e62dfe (PdfCraft 0.21.1-p1)",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/134",
+    "state": "open",
+    "merged_at": null,
+    "closed_at": null,
+    "created_at": "2026-11-12T02:48:10Z",
+    "head": {
+      "ref": "sync/upstream-b503b2e62dfe",
+      "sha": "da9ef9d70eeca0a4e3c3c3cdd25f5aad7fedfc9a"
+    }
+  },
+  {
+    "number": 133,
+    "title": "xtask version: move every workspace crate pin",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/133",
+    "state": "closed",
+    "merged_at": "2026-11-12T02:44:39Z",
+    "closed_at": "2026-11-12T02:44:39Z",
+    "created_at": "2026-11-12T02:35:56Z",
+    "head": {
+      "ref": "fix/sync-stale-pins",
+      "sha": "7adfdf306c2b63040e3a0a541f5114f26c1f6747"
+    }
+  },
+  {
+    "number": 132,
+    "title": "Sync: stub upstream's new updater API; rustix 1.1.6",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/132",
+    "state": "closed",
+    "merged_at": "2026-11-11T21:16:38Z",
+    "closed_at": "2026-11-11T21:16:38Z",
+    "created_at": "2026-11-11T21:12:40Z",
+    "head": {
+      "ref": "fix/upstream-api-stubs",
+      "sha": "ff0b5e09f6658a57843cb6a1d7310cee5ac091ee"
+    }
+  },
+  {
+    "number": 130,
+    "title": "Sync upstream: storytold/pdfcraft v0.21.0@0ca2c549daf1 (PdfCraft 0.21.0-p1)",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/130",
+    "state": "closed",
+    "merged_at": "2026-11-11T21:24:30Z",
+    "closed_at": "2026-11-11T21:24:30Z",
+    "created_at": "2026-11-11T18:06:40Z",
+    "head": {
+      "ref": "sync/upstream-0ca2c549daf1",
+      "sha": "2b7f02b8fd9a9cfd51dafc117f717b20390d6bf1"
+    }
+  },
+  {
+    "number": 129,
+    "title": "Release: PdfCraft 0.20.0-p10",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/129",
+    "state": "closed",
+    "merged_at": "2026-11-11T00:17:18Z",
+    "closed_at": "2026-11-11T00:17:18Z",
+    "created_at": "2026-11-11T00:11:40Z",
+    "head": {
+      "ref": "release/v0.20.0-p10",
+      "sha": "3c7d43181bf8504682c56d933467d4a213168c65"
+    }
+  },
+  {
+    "number": 128,
+    "title": "Sync: a stuck sync keeps one PR; Updates answers prompt_open",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/128",
+    "state": "closed",
+    "merged_at": "2026-11-11T00:08:51Z",
+    "closed_at": "2026-11-11T00:08:51Z",
+    "created_at": "2026-11-11T00:04:31Z",
+    "head": {
+      "ref": "fix/stuck-sync-quiet",
+      "sha": "700c564f3fecac2757c10df74a891fb0b893f7aa"
+    }
+  },
+  {
+    "number": 126,
+    "title": "Sync upstream: storytold/pdfcraft main@1fc9501cf35c (PdfCraft 0.20.0-p10)",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/126",
+    "state": "closed",
+    "merged_at": null,
+    "closed_at": "2026-11-10T20:38:54Z",
+    "created_at": "2026-11-10T20:04:58Z",
+    "head": {
+      "ref": "sync/upstream-1fc9501cf35c",
+      "sha": "6ca9872f29691d917e10d95941717bd168293cbd"
+    }
+  },
+  {
+    "number": 124,
+    "title": "Sync upstream: storytold/pdfcraft main@b16cd3265937 (PdfCraft 0.20.0-p10)",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/124",
+    "state": "closed",
+    "merged_at": null,
+    "closed_at": "2026-11-10T20:38:58Z",
+    "created_at": "2026-11-10T19:04:59Z",
+    "head": {
+      "ref": "sync/upstream-b16cd3265937",
+      "sha": "fabfaf8a88cda6d8eae4826cfa819b43865e6d4d"
+    }
+  },
+  {
+    "number": 122,
+    "title": "Sync upstream: storytold/pdfcraft main@92b965dba324 (PdfCraft 0.20.0-p10)",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/122",
+    "state": "closed",
+    "merged_at": null,
+    "closed_at": "2026-11-10T20:39:01Z",
+    "created_at": "2026-11-10T18:05:03Z",
+    "head": {
+      "ref": "sync/upstream-92b965dba324",
+      "sha": "14467d2f3ec1cd42eb653f9b76ffff5d92763286"
+    }
+  },
+  {
+    "number": 120,
+    "title": "Sync upstream: storytold/pdfcraft main@8559306f7741 (PdfCraft 0.20.0-p10)",
+    "html_url": "https://github.com/krichelj/pdfcraft/pull/120",
+    "state": "closed",
+    "merged_at": null,
+    "closed_at": "2026-11-10T20:39:04Z",
+    "created_at": "2026-11-10T17:04:45Z",
+    "head": {
+      "ref": "sync/upstream-8559306f7741",
+      "sha": "1a9ebf77e45f235b42b1722216a6d9d86a4ad978"
+    }
+  }
+]

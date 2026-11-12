@@ -1,0 +1,23 @@
+{
+  "tag_name": "v0.21.0-p1",
+  "html_url": "https://github.com/krichelj/pdfcraft/releases/tag/v0.21.0-p1",
+  "draft": false,
+  "assets": [
+    {
+      "name": "pdfcraft-0.21.0-p1-macos-aarch64.dmg",
+      "size": 57311145
+    },
+    {
+      "name": "pdfcraft-0.21.0-p1-macos-aarch64.zip",
+      "size": 60009982
+    },
+    {
+      "name": "pdfcraft-cli-0.21.0-p1-macos-aarch64.zip",
+      "size": 45126632
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "size": 313
+    }
+  ]
+}
