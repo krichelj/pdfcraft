@@ -64,7 +64,6 @@ pdfcraft-render = { path = "crates/render", version = "0.21.1-p1" }
 pdfcraft-engine = { path = "crates/engine", version = "0.21.1-p1" }
 pdfcraft-platform = { path = "crates/platform", version = "0.21.1-p1" }
 pdfcraft-ui-egui = { path = "crates/ui-egui", version = "0.21.1-p1" }
-pdfcraft-updater = { path = "apps/pdfcraft-updater", version = "0.21.1-p1" }
 pdfcraft-automation = { path = "crates/automation", version = "0.21.1-p1", default-features = false }
 pdfcraft-prc = { path = "crates/prc", version = "0.21.1-p1" }
 pdfcraft-prc-render = { path = "crates/prc-render", version = "0.21.1-p1" }
