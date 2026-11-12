@@ -12,6 +12,7 @@ cd "$ROOT"
 REPO=krichelj/pdfcraft
 # shellcheck source=lib.sh
 . "$ROOT/packaging/fork/lib.sh"
+close_settled_asks
 
 git config user.name >/dev/null || git config user.name "krichelj"
 git config user.email >/dev/null || git config user.email "krichelj@users.noreply.github.com"

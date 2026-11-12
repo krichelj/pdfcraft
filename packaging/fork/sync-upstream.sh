@@ -39,6 +39,7 @@ FORK_OWNED="${SYNC_FORK_OWNED-crates/ui-egui/src/platform/updates.rs crates/ui-e
 FORK_WORKFLOWS="ci.yml own-runners-guard.yml packaging-lint.yml release.yml sync-upstream.yml fork-automation.yml auto-merge.yml"
 # shellcheck source=lib.sh
 . "$ROOT/packaging/fork/lib.sh"
+close_settled_asks
 
 # Mergiraf, the syntax-aware merge for the conflicts no rule below covers (both sides adding items
 # to one file, say): the runner host must have it (`cargo install --locked mergiraf`, own-ci-runners).
