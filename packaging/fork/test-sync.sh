@@ -815,5 +815,25 @@ check "  the LLM reads a digest of a 900 KB-class failed log, not the log" bash 
     && ! grep -q 'PASS \[' '$T/llmlog.context' && ! grep -q \$'\\t' '$T/llmlog.context' \
     && ! grep -q \$'\\033' '$T/llmlog.context' && [ \"\$(wc -c <'$T/llmlog.context')\" -le 40000 ]"
 
+# 9. An ask whose PR merged (by hand, after a rerun) is closed; one whose PR is still open, one
+# never merged, and an issue that is not an ask stay open.
+mkdir -p "$T/ghsettle"
+cat >"$T/ghsettle/gh" <<'EOF'
+#!/usr/bin/env bash
+log="$(dirname "$0")/calls"
+case "$1 $2" in
+  "issue list") printf '%s\n' '[{"number":135,"title":"sync/upstream-aaa: PR #134 has failing checks"},{"number":140,"title":"sync/upstream-bbb: PR #139 has failing checks"},{"number":141,"title":"sync/upstream-ccc: upstream merge conflicts"},{"number":7,"title":"a bug report: not the sync"}]' | jq -r "${@: -1}" ;;
+  "pr list")
+    head="" state=""
+    while [ $# -gt 0 ]; do case "$1" in --head) head="$2" ;; --state) state="$2" ;; esac; shift; done
+    case "$head $state" in "sync/upstream-aaa merged") echo 134 ;; "sync/upstream-bbb merged") echo 138 ;; "sync/upstream-bbb open") echo 139 ;; esac ;;
+  "issue close") echo "close $3" >>"$log" ;;
+esac
+EOF
+chmod +x "$T/ghsettle/gh"
+# shellcheck disable=SC2031 # the subshell sets PATH and REPO for the stand-in gh only
+run_settle() { (export PATH="$T/ghsettle:$PATH" REPO=x/y SYNC_DRY_RUN= && . "$SRC/packaging/fork/lib.sh" && close_settled_asks) && [ "$(cat "$T/ghsettle/calls")" = "close 135" ]; }
+check "asks: the issue of a merged sync PR is closed, the others stay open" bash -c "$(declare -f run_settle); T='$T' SRC='$SRC'; run_settle"
+
 echo "fork automation: $pass passed, $fail failed"
 [ "$fail" = 0 ]

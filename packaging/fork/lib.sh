@@ -61,6 +61,28 @@ stop_for_person() {
   die "$4"
 }
 
+# Usage: close_settled_asks. Close each open ask (ask_person's issue, titled "<branch>: ...") whose
+# branch's PR has since merged with none still open: the owner fixed or re-ran it, by hand or
+# otherwise, and the issue would stay open for ever (#135 after PR 134 merged). Runs at the start of
+# every sync and release bump; a gh failure only warns. A dry run closes nothing.
+close_settled_asks() {
+  local n branch merged open
+  [ "${SYNC_DRY_RUN:-}" != 1 ] || return 0
+  # shellcheck disable=SC2016 # a jq program, not shell
+  gh issue list --repo "$REPO" --state open --limit 100 --json number,title \
+    --jq '.[] | select(.title | test("^(sync/upstream-|release/)[^ :]+: ")) | "\(.number) \(.title | split(":")[0])"' 2>/dev/null |
+    while read -r n branch; do
+      merged=$(gh pr list --repo "$REPO" --head "$branch" --state merged --json number --jq '.[0].number // empty' 2>/dev/null) || continue
+      open=$(gh pr list --repo "$REPO" --head "$branch" --state open --json number --jq '.[0].number // empty' 2>/dev/null) || continue
+      if [ -z "$merged" ] || [ -n "$open" ]; then continue; fi
+      if gh issue close "$n" --repo "$REPO" --comment "PR #$merged merged, so nothing here waits for a person any more." >/dev/null; then
+        echo "sync: closed issue #$n: PR #$merged merged"
+      else
+        echo "::warning::couldn't close issue #$n, whose PR #$merged merged"
+      fi
+    done || echo "::warning::couldn't list the open issues to close the settled ones"
+}
+
 # Push a branch with the owner's gh login: the workflow's own token can't push workflow files, and
 # its pushes start no other workflow.
 push_as_owner() {
