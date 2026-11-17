@@ -18,6 +18,23 @@ rule = "flat-dir"
 path = "xtask/**"
 reason = "Upstream's xtask layout (the fork's own modules sit beside upstream's, e.g. fork_version.rs, fork_notes.rs)."
 
+# mixed-dir (at most 8 kinds of loose files per folder) replaced flat-dir in the skill on 2026-11-11
+# and covers the same upstream folders, so they keep the same exemption.
+[[exempt]]
+rule = "mixed-dir"
+path = "crates/**"
+reason = "Upstream's crate layout: splitting its source and test files into subfolders would conflict with every daily sync."
+
+[[exempt]]
+rule = "mixed-dir"
+path = "apps/**"
+reason = "Upstream's app layout: splitting its source and test files would conflict with every daily sync."
+
+[[exempt]]
+rule = "mixed-dir"
+path = "xtask/**"
+reason = "Upstream's xtask layout (the fork's own modules sit beside upstream's, e.g. fork_version.rs, fork_notes.rs)."
+
 [[exempt]]
 rule = "undocumented-dir"
 path = "packaging"
