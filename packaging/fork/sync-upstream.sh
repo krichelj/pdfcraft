@@ -182,7 +182,8 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
     done
     # Mergiraf keeps both sides' items in their merged order; rustfmt puts them as CI's fmt check
     # wants them (two new `mod` lines, say).
-    edition=$(sed -n 's/^edition = "\([0-9]*\)".*/\1/p' Cargo.toml | head -1)
+    # One sed that quits itself: `| head -1` under pipefail can kill the writer (SIGPIPE, exit 141).
+    edition=$(sed -n '/^edition = "/{s/^edition = "\([0-9]*\)".*/\1/p;q;}' Cargo.toml)
     for f in $mergiraf_resolved; do
       case "$f" in *.rs) rustfmt --edition "${edition:-2024}" "$f" && git add "$f" ;; esac
     done
@@ -286,7 +287,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   fixes=$(git log --first-parent --format=%s sync-base..HEAD | grep '^Sync fix' || true)
 
   base_now="${current%%-*}"
-  base_up=$(git show "$UPSTREAM_REF:Cargo.toml" | sed -n '/^version = "/{s/^version = "\([^"]*\)".*/\1/p;q;}')
+  # Read the manifest whole first: piping `git show` into a sed that quits at the version line
+  # killed git with SIGPIPE (exit 141) once upstream's Cargo.toml outgrew the pipe buffer.
+  up_toml=$(git show "$UPSTREAM_REF:Cargo.toml")
+  base_up=$(sed -n '/^version = "/{s/^version = "\([^"]*\)".*/\1/p;q;}' <<<"$up_toml")
   base_up="${base_up%%-*}"
   # Upstream's version moved past the fork's base: <new base>-p1. Same or older (upstream's main
   # keeps an older version while releases are cut on a branch of their own): the next patch level,
