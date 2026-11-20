@@ -5981,6 +5981,39 @@ fn a_rectangle_is_still_painted_as_a_rectangle() {
     }
 }
 
+/// A fill whose cubic is 2e17 pixels across on the page (a unit curve under a `cm` of 2e17, as a
+/// glyph outline gets under a huge text matrix) was flattened whole into about a billion lines,
+/// and the allocation aborted the process (the mutation fuzzer found it from glyphs in two pdf.js
+/// test files). The rasterizer now flattens only the pieces of such a curve near the page
+/// (vendored vello_common patch 5), and draws them.
+#[test]
+fn a_fill_with_a_curve_far_larger_than_the_page_is_drawn_where_it_crosses_the_page() {
+    // In user space the curve leaves (0, 0) to the right and bends down to (0, -1), and `h` closes
+    // it up the y axis. At this scale the page sees only its first 1e-16 of a unit, where it is
+    // the horizontal line through (20, 20) and the closing line the vertical one: the fill is the
+    // quarter of the 40 pt page right of x = 20 and below y = 20.
+    let content = b"0 0 1 rg 200000000000000000 0 0 200000000000000000 20 20 cm 0 0 m 1 0 1 -1 0 -1 c h f".to_vec();
+    let pdf = one_page_pdf(&content, "");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut r = PageRenderer::new(Arc::new(pdf), RenderConfig::default());
+        let _ = tx.send(r.render(RenderRequest { page: 0, kind: RequestKind::Pixels, tile: None, scale: 1.0, tag: 0, preview: false }));
+    });
+    let page = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("the fill must render");
+    assert!(page.error.is_none(), "{:?}", page.error);
+    let pixel = |x: u32, y: u32| {
+        let offset = ((y * page.width + x) * 4) as usize;
+        [page.rgba[offset], page.rgba[offset + 1], page.rgba[offset + 2]]
+    };
+    // Device y counts down the page, so the filled quarter is the bottom right one.
+    for (x, y) in [(30, 30), (22, 22), (38, 38)] {
+        assert_eq!(pixel(x, y), [0, 0, 255], "({x}, {y}) is in the fill");
+    }
+    for (x, y) in [(10, 10), (30, 10), (10, 30), (18, 22), (22, 18)] {
+        assert_eq!(pixel(x, y), [255, 255, 255], "({x}, {y}) is outside the fill");
+    }
+}
+
 /// A one-page PDF whose content is the stream `stream`, with the entries `dict` in its
 /// dictionary.
 fn one_page_pdf(stream: &[u8], dict: &str) -> Vec<u8> {

@@ -153,6 +153,22 @@ pub(crate) fn flatten<S: Simd>(
                     || line.nearest(p1, 0.).distance_sq <= 4. * TOL_2
                 {
                     callback.callback(LinePathEl::LineTo(p2));
+                } else if is_too_large(&[p0, p1, p2]) {
+                    // PdfCraft patch (5): see `flatten_large_cubic`. Raising the quadratic to a
+                    // cubic is exact.
+                    let cull = CullBox {
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    };
+                    flatten_large_cubic(
+                        simd,
+                        QuadBez::new(p0, p1, p2).raise(),
+                        &cull,
+                        callback,
+                        flatten_ctx,
+                    );
                 } else {
                     let q = QuadBez::new(p0, p1, p2);
                     let params = q.estimate_subdiv(SQRT_TOL);
@@ -211,6 +227,21 @@ pub(crate) fn flatten<S: Simd>(
                     ) <= 16. / 9. * TOL_2
                 {
                     callback.callback(LinePathEl::LineTo(p3));
+                } else if is_too_large(&[p0, p1, p2, p3]) {
+                    // PdfCraft patch (5): see `flatten_large_cubic`.
+                    let cull = CullBox {
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    };
+                    flatten_large_cubic(
+                        simd,
+                        CubicBez::new(p0, p1, p2, p3),
+                        &cull,
+                        callback,
+                        flatten_ctx,
+                    );
                 } else {
                     let c = CubicBez::new(p0, p1, p2, p3);
                     let max = flatten_cubic_simd(simd, c, flatten_ctx);
@@ -239,6 +270,111 @@ pub(crate) fn flatten<S: Simd>(
     if last_pt != start_pt {
         callback.callback(LinePathEl::LineTo(start_pt));
     }
+}
+
+// PdfCraft patch (5).
+/// The largest extent (the longer side of the control points' bounding box), in device pixels, of
+/// a curve that is flattened in one piece. The number of lines a curve flattens into grows with
+/// the square root of its extent and has no bound of its own: a glyph drawn at a text matrix of
+/// 2e15 gave one cubic an extent of 6e17 pixels and 759 million points, a 6 GB allocation that
+/// aborted the process (the mutation fuzzer, from pdf.js's issue5972.pdf; a Type 3 glyph from
+/// issue19634.pdf asked for 4 GB). A curve of at most this extent flattens into a few thousand
+/// lines at most (`flatten_simd::tests::a_curve_of_the_largest_extent_flattens_into_few_lines`).
+/// Device surfaces are at most 2^16 pixels on a side, so no curve that fits on one is split.
+pub(crate) const MAX_FLATTEN_EXTENT: f64 = (1_u64 << 20) as f64;
+
+// PdfCraft patch (5).
+/// The most times one curve is split by `flatten_large_cubic`. A curve near the cull box is cut
+/// into a few pieces per halving of its extent, so this covers every finite extent f64 holds
+/// (about 2^1024, a thousand halvings) with room to spare, and still bounds the work when it
+/// does not.
+const MAX_SPLITS: usize = 1 << 14;
+
+// PdfCraft patch (5).
+/// The cull box `flatten` compares curve pieces against, with its top aligned to a strip row.
+struct CullBox {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+// PdfCraft patch (5).
+/// Whether a curve with these control points is finite and wider or taller than
+/// [`MAX_FLATTEN_EXTENT`]. A curve with an infinite or NaN point is not: it flattens into one
+/// line as before (and NaN drops the path in `fill`).
+fn is_too_large(pts: &[Point]) -> bool {
+    let (mut x0, mut y0, mut x1, mut y1) = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for p in pts {
+        if !p.is_finite() {
+            return false;
+        }
+        x0 = x0.min(p.x);
+        y0 = y0.min(p.y);
+        x1 = x1.max(p.x);
+        y1 = y1.max(p.y);
+    }
+    f64::max(x1 - x0, y1 - y0) > MAX_FLATTEN_EXTENT
+}
+
+// PdfCraft patch (5).
+/// Flatten a cubic wider or taller than [`MAX_FLATTEN_EXTENT`] by halving it until each piece is
+/// culled the way `flatten` culls a whole curve (to the right of, above or below the cull box: a
+/// move to its end; to the left of it, or within the tolerance of its chord: a line to its end)
+/// or is small enough to flatten. Only the pieces near the cull box are flattened, so the lines
+/// grow with the pieces that reach the box, not with the curve's extent, and the pixels inside the
+/// box are the same within the tolerance. A piece still too large once [`MAX_SPLITS`] splits are
+/// spent becomes a line to its end.
+#[inline(never)]
+fn flatten_large_cubic<S: Simd>(
+    simd: S,
+    c: CubicBez,
+    cull: &CullBox,
+    callback: &mut impl Callback,
+    ctx: &mut FlattenCtx,
+) {
+    let mut pieces = core::mem::take(&mut ctx.large_cubic_pieces);
+    pieces.clear();
+    pieces.push(c);
+    let mut splits = 0;
+    while let Some(c) = pieces.pop() {
+        let pts = [c.p0, c.p1, c.p2, c.p3];
+        let chord = Line::new(c.p0, c.p3);
+        if pts.iter().all(|p| p.x > cull.right)
+            || pts.iter().all(|p| p.y < cull.top)
+            || pts.iter().all(|p| p.y > cull.bottom)
+        {
+            callback.callback(LinePathEl::MoveTo(c.p3));
+        } else if pts.iter().all(|p| p.x < cull.left)
+            || f64::max(
+                chord.nearest(c.p1, 0.).distance_sq,
+                chord.nearest(c.p2, 0.).distance_sq,
+            ) <= 16. / 9. * TOL_2
+        {
+            callback.callback(LinePathEl::LineTo(c.p3));
+        } else if is_too_large(&pts) {
+            if splits < MAX_SPLITS {
+                splits += 1;
+                let (a, b) = c.subdivide();
+                // `a` is popped first, so the pieces come out in order along the curve.
+                pieces.push(b);
+                pieces.push(a);
+            } else {
+                callback.callback(LinePathEl::LineTo(c.p3));
+            }
+        } else {
+            let max = flatten_cubic_simd(simd, c, ctx);
+            for p in &ctx.flattened_cubics[1..max] {
+                callback.callback(LinePathEl::LineTo(Point::new(p.x as f64, p.y as f64)));
+            }
+        }
+    }
+    ctx.large_cubic_pieces = pieces;
 }
 
 // The below methods are copied from kurbo and needed to implement flattening of normal quad curves.
@@ -351,6 +487,9 @@ pub struct FlattenCtx {
     n_quads: usize,
     /// Reusable buffer for flattened cubic points.
     flattened_cubics: Vec<Point32>,
+    // PdfCraft patch (5).
+    /// Reusable stack of the pieces `flatten_large_cubic` has yet to emit.
+    large_cubic_pieces: Vec<CubicBez>,
 }
 
 #[inline(always)]
@@ -666,6 +805,157 @@ fn estimate(err_div: f64) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::flatten_simd::{MAX_QUADS, estimate};
+
+    // PdfCraft patch (5): tests for `flatten_large_cubic`.
+    mod large_curves {
+        use crate::flatten::{FlattenCtx, Line, fill};
+        use crate::flatten_simd::MAX_FLATTEN_EXTENT;
+        use crate::geometry::RectU16;
+        use crate::kurbo::{Affine, BezPath, CubicBez, ParamCurve, Point};
+        use alloc::vec::Vec;
+        use fearless_simd::Level;
+
+        /// Both the portable code and the SIMD level this machine detects.
+        fn levels() -> [Level; 2] {
+            [Level::baseline(), Level::new()]
+        }
+
+        /// The lines `fill` flattens a closed path of the cubic `c` into, with a 200 x 200 cull box.
+        fn fill_cubic(level: Level, c: CubicBez) -> Vec<Line> {
+            let mut path = BezPath::new();
+            path.move_to(c.p0);
+            path.curve_to(c.p1, c.p2, c.p3);
+            path.close_path();
+            let mut lines = Vec::new();
+            fill(
+                level,
+                &path,
+                Affine::IDENTITY,
+                &mut lines,
+                &mut FlattenCtx::default(),
+                RectU16::new(0, 0, 200, 200),
+            );
+            lines
+        }
+
+        /// The distance from `p` to the nearest of `lines`.
+        fn distance_to(lines: &[Line], p: Point) -> f64 {
+            lines
+                .iter()
+                .map(|l| {
+                    let seg = crate::kurbo::Line::new(
+                        (l.p0.x as f64, l.p0.y as f64),
+                        (l.p1.x as f64, l.p1.y as f64),
+                    );
+                    crate::kurbo::ParamCurveNearest::nearest(&seg, p, 1e-9)
+                        .distance_sq
+                        .sqrt()
+                })
+                .fold(f64::INFINITY, f64::min)
+        }
+
+        /// A deterministic xorshift generator, so a failure names the same cubic every run.
+        struct Rng(u64);
+        impl Rng {
+            fn unit(&mut self) -> f64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                (self.0 >> 11) as f64 / (1_u64 << 53) as f64
+            }
+        }
+
+        // Without the bound every curve is flattened whole, however large: the cubic below has an
+        // extent of 1e12 pixels and flattened into about a million lines.
+        #[test]
+        fn a_huge_curve_through_the_cull_box_flattens_into_few_lines() {
+            let c = CubicBez::new((-1e12, 100.0), (-3e11, 120.0), (3e11, 80.0), (1e12, -1e12));
+            for level in levels() {
+                let lines = fill_cubic(level, c);
+                assert!(!lines.is_empty(), "the curve was dropped");
+                assert!(lines.len() < 10_000, "{} lines", lines.len());
+            }
+        }
+
+        // The mutation fuzzer's two findings: a glyph outline at a text matrix of 2e15 asked for
+        // 6,071,574,560 bytes of points, and a Type 3 glyph for 4,294,967,296 bytes of lines. Both
+        // aborted the process. These are their cubics as `fill` received them.
+        #[test]
+        fn the_fuzzer_findings_flatten_into_few_lines() {
+            let glyph = CubicBez::new(
+                (-1.591031676357449e17, 4.773095029072349e17),
+                (1.1068046444225731e17, 4.773095029072349e17),
+                (2.4211351596743786e17, 1.0606877842383011e17),
+                (3.043712772162076e17, -1.7524406870024054e17),
+            );
+            let type3 = CubicBez::new(
+                (6.244873477989416e19, 2.5095211771593333),
+                (6.4560546875, -1.4901824747033642e16),
+                (5.03955078125, 15.59423828125),
+                (8.9521484375, 2.494140625),
+            );
+            for level in levels() {
+                for c in [glyph, type3] {
+                    let lines = fill_cubic(level, c);
+                    assert!(lines.len() < 10_000, "{} lines", lines.len());
+                }
+            }
+        }
+
+        // The pieces near the cull box are flattened to the same tolerance as a whole curve: every
+        // point of the curve inside the box lies within it of the lines. A quarter of a circle with
+        // a radius of 1e9 pixels crosses the middle of the box at t = 0.3, away from where the
+        // halvings cut it (a line to each piece's end is right there and 100 pixels off further
+        // along).
+        #[test]
+        fn a_huge_curve_is_drawn_where_it_crosses_the_cull_box() {
+            const T: f64 = 0.3;
+            let r = 1e9;
+            let k = 0.552_284_749_8 * r;
+            let c = CubicBez::new((0.0, -r), (k, -r), (r, -k), (r, 0.0));
+            let c = Affine::translate(Point::new(100.0, 100.0) - c.eval(T)) * c;
+            // The curve is 1.6e9 pixels long, so the 400 pixels around the crossing are a
+            // parameter span of about 2.5e-7.
+            for level in levels() {
+                let lines = fill_cubic(level, c);
+                assert!(lines.len() < 10_000, "{} lines", lines.len());
+                let mut checked = 0;
+                for i in -10_000..=10_000 {
+                    let p = c.eval(T + i as f64 * 2.5e-11);
+                    if (0.0..=200.0).contains(&p.x) && (0.0..=200.0).contains(&p.y) {
+                        checked += 1;
+                        let d = distance_to(&lines, p);
+                        assert!(d < 0.3, "({}, {}) is {d} from the lines", p.x, p.y);
+                    }
+                }
+                assert!(
+                    checked > 5_000,
+                    "{checked} points of the arc are in the box"
+                );
+            }
+        }
+
+        // The bound: a curve of the largest extent flattened in one piece flattens into a few
+        // thousand lines at most. Random control points over the whole extent, which include loops
+        // and cusps.
+        #[test]
+        fn a_curve_of_the_largest_extent_flattens_into_few_lines() {
+            let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+            let e = MAX_FLATTEN_EXTENT;
+            let mut most = 0;
+            for _ in 0..20_000 {
+                let mut p = || {
+                    Point::new(
+                        rng.unit() * e - e / 2.0 + 100.0,
+                        rng.unit() * e - e / 2.0 + 100.0,
+                    )
+                };
+                let c = CubicBez::new(p(), p(), p(), p());
+                most = most.max(fill_cubic(Level::baseline(), c).len());
+            }
+            assert!(most < 20_000, "{most} lines");
+        }
+    }
 
     fn old_estimate(err_div: f64) -> usize {
         let n_quads = (err_div.powf(1. / 6.0).ceil() as usize).max(1);
