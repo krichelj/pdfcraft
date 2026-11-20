@@ -13,6 +13,342 @@
       "reason": "tests/ comes from upstream storytold/pdfcraft; the fork does not restructure upstream's layout"
     },
     {
+      "rule": "mixed-dir",
+      "path": ".",
+      "measure": 16,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "apps/pdfcraft-cli/tests/it",
+      "measure": 25,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "apps/pdfcraft/src",
+      "measure": 14,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "apps/pdfcraft/tests/it",
+      "measure": 14,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "assets/app-icon",
+      "measure": 9,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "assets/icons",
+      "measure": 191,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/a11y/src",
+      "measure": 11,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/annot/src",
+      "measure": 13,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/automation/src",
+      "measure": 31,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/automation/tests/it",
+      "measure": 26,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/cos/src",
+      "measure": 9,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/cos/tests/it",
+      "measure": 10,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/edit/src",
+      "measure": 29,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/edit/tests",
+      "measure": 9,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/engine/src",
+      "measure": 60,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/engine/tests/it",
+      "measure": 10,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/export/src",
+      "measure": 11,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/filters/src",
+      "measure": 10,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/fonts/src",
+      "measure": 14,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/forms/src",
+      "measure": 14,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/js/src",
+      "measure": 17,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/js/src/formcalc",
+      "measure": 9,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/optimize/src",
+      "measure": 11,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/organize/src",
+      "measure": 15,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/prc/src",
+      "measure": 11,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/prc/src/tree",
+      "measure": 9,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/preflight/src",
+      "measure": 12,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/print/src",
+      "measure": 9,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/redact/src",
+      "measure": 18,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/redact/src/tests",
+      "measure": 14,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/render/src",
+      "measure": 11,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/render/src/raster/tests",
+      "measure": 16,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/render/tests/it",
+      "measure": 27,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/sign/src",
+      "measure": 18,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/sign/tests/data",
+      "measure": 10,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/sign/tests/it",
+      "measure": 11,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/src",
+      "measure": 29,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/src/app",
+      "measure": 10,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/src/canvas",
+      "measure": 27,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/src/dialogs",
+      "measure": 16,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/src/panels",
+      "measure": 12,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/src/platform",
+      "measure": 12,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/src/tools",
+      "measure": 18,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/src/workflows",
+      "measure": 19,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/tests/it",
+      "measure": 86,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/tests/play",
+      "measure": 10,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/ui-egui/tests/snapshots",
+      "measure": 11,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "crates/xfa/src",
+      "measure": 19,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "docs",
+      "measure": 29,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "docs/brand",
+      "measure": 9,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "docs/images",
+      "measure": 14,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "packaging/fork",
+      "measure": 9,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "packaging/macos",
+      "measure": 12,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "packaging/windows",
+      "measure": 14,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "tests/interactions/document-properties",
+      "measure": 10,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "xtask/src",
+      "measure": 17,
+      "reason": "upstream storytold/pdfcraft's layout; the fork does not restructure upstream's files (every move would conflict on the next sync)"
+    },
+    {
       "rule": "undocumented-dir",
       "path": "crates/preflight/fuzz/fuzz_targets",
       "reason": "upstream storytold/pdfcraft code; the fork takes upstream's tree unchanged"
