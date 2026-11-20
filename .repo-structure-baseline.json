@@ -13,6 +13,66 @@
       "reason": "tests/ comes from upstream storytold/pdfcraft; the fork does not restructure upstream's layout"
     },
     {
+      "rule": "mixed-dir",
+      "path": ".",
+      "measure": 16,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "assets/app-icon",
+      "measure": 9,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "assets/icons",
+      "measure": 191,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "docs",
+      "measure": 29,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "docs/brand",
+      "measure": 9,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "docs/images",
+      "measure": 14,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "packaging/fork",
+      "measure": 9,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "packaging/macos",
+      "measure": 12,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "packaging/windows",
+      "measure": 14,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
+      "rule": "mixed-dir",
+      "path": "tests/interactions/document-properties",
+      "measure": 10,
+      "reason": "Already over the mixed-dir limit when the rule was added to repo-structure on 2026-11-11; upstream storytold/pdfcraft owns all of these folders except packaging/fork, whose split is its own change. Growth is still refused."
+    },
+    {
       "rule": "undocumented-dir",
       "path": "crates/preflight/fuzz/fuzz_targets",
       "reason": "upstream storytold/pdfcraft code; the fork takes upstream's tree unchanged"
