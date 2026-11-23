@@ -191,12 +191,28 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
     # whichever the merged tree passes `cargo deny` with, or a person decides.
     if [ -n "$took_deny" ]; then
       command -v cargo-deny >/dev/null || die "deny.toml conflicted and cargo-deny isn't on the runner: see own-ci-runners"
+      # Judge the policy against the lock the PR will carry: upstream's lock (taken on a conflict)
+      # with every package the fork had newer kept at the fork's version. Upstream's raw lock had
+      # tokio 1.53.1, whose advisory the fork's 1.54.1 fixes, and failed every policy (v0.22.0).
+      cargo metadata --format-version 1 >/dev/null 2>&1 || true
+      git show sync-base:Cargo.lock >"$RUNNER_TMP/fork.lock"
+      keep_newer_locked "$RUNNER_TMP/fork.lock"
       cp "$RUNNER_TMP/deny.theirs" deny.toml
       if cargo deny --all-features check >/dev/null 2>&1; then
         echo "sync: took upstream's deny.toml; cargo deny passes"
       else
         git merge-file --union -p "$RUNNER_TMP/deny.ours" "$RUNNER_TMP/deny.base" "$RUNNER_TMP/deny.theirs" >deny.toml || true
-        cargo deny --all-features check >/dev/null 2>&1 || die "the merged tree fails cargo deny with either deny.toml; a person decides"
+        if ! cargo deny --all-features check >"$RUNNER_TMP/deny.out" 2>&1; then
+          # Quiet on the hourly re-runs (stop_for_person): one issue, no failure mail each hour.
+          stop_for_person "$branch" "the merged tree fails cargo deny" "Merging storytold/pdfcraft@${up:0:12} fails \`cargo deny --all-features check\` with upstream's deny.toml and with both sides' entries:
+
+\`\`\`
+$(grep -m 40 -E '^(error|warning)\[|ID: |Solution: ' "$RUNNER_TMP/deny.out")
+\`\`\`
+
+Fix the fork (a \`cargo update -p <crate>\` on main, or a deny.toml entry with its reason); the next sync run takes it." \
+            "the merged tree fails cargo deny with either deny.toml; a person decides"
+        fi
         echo "sync: deny.toml keeps both sides' entries; cargo deny passes"
       fi
       git add deny.toml

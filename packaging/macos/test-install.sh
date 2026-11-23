@@ -54,11 +54,13 @@ stub shasum '[ "$1 $2" = "-a 256" ] || exit 2; sha256sum "$3"'
 stub ditto 'if [ "$1" = -x ]; then mkdir -p "$4"; unzip -q "$3" -d "$4"; else
   [ "${STUB_DITTO_FAIL:-0}" = 0 ] || exit 1
   if [ -n "${STUB_APP_PID:-}" ] && kill -0 "$STUB_APP_PID" 2>/dev/null; then echo "copied while the app ran" >>"$STUB_LOG"; fi
-  if [ -e "${STUB_RUNNING:-/nonexistent}" ]; then echo "copied while the app ran" >>"$STUB_LOG"; fi
+  if [ -n "${STUB_RUNNING:-}" ] && [ -e "$STUB_RUNNING" ]; then echo "copied while the app ran" >>"$STUB_LOG"; fi
   cp -a "$1" "$2"; fi'
 stub codesign 'echo "codesign $*" >>"$STUB_LOG"; exit "${STUB_CODESIGN_RC:-0}"'
 # pgrep -xq PdfCraft: "running" while the file STUB_RUNNING exists.
-stub pgrep '[ -e "${STUB_RUNNING:-/nonexistent}" ]'
+# Unset means not running: never a default path such as /nonexistent, which a system package
+# created as its home on a runner host (2026-11-17), hanging every case for an hour.
+stub pgrep '[ -n "${STUB_RUNNING:-}" ] && [ -e "$STUB_RUNNING" ]'
 # osascript: records its arguments; a dialog answers STUB_DIALOG; "quit" ends the running app,
 # after STUB_QUIT_DELAY seconds (a user answering unsaved-changes prompts), or never when "never".
 stub osascript 'echo "osascript $*" >>"$STUB_LOG"
@@ -67,8 +69,8 @@ case "$*" in
   *"to quit"*)
     case "${STUB_QUIT_DELAY:-0}" in
       never) ;;
-      0) rm -f "${STUB_RUNNING:-/nonexistent}" ;;
-      *) (sleep "$STUB_QUIT_DELAY"; rm -f "${STUB_RUNNING:-/nonexistent}") >/dev/null 2>&1 & ;;
+      0) [ -z "${STUB_RUNNING:-}" ] || rm -f "$STUB_RUNNING" ;;
+      *) [ -z "${STUB_RUNNING:-}" ] || (sleep "$STUB_QUIT_DELAY"; rm -f "$STUB_RUNNING") >/dev/null 2>&1 & ;;
     esac ;;
 esac'
 for t in xattr open; do stub "$t" "echo \"$t \$*\" >>\"\$STUB_LOG\""; done
