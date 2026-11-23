@@ -123,7 +123,7 @@ cp "$ROOT/NOTICE" "$APP/Contents/Resources/NOTICE"
 # The standard About panel (PdfCraft menu > About PdfCraft) shows Credits.rtf under the version:
 # the website and Discord links the in-app About dialog has (#1287).
 cp "$HERE/Credits.rtf" "$APP/Contents/Resources/Credits.rtf"
-copy_font_licences "$APP/Contents/Resources"
+copy_docs "$APP/Contents/Resources"
 # Help > Check for updates > Install and relaunch runs this copy (apps/pdfcraft/src/updates.rs).
 install -m 755 "$HERE/install.sh" "$APP/Contents/Resources/install.sh"
 # OCR models: the app finds them at Contents/MacOS/../Resources/models. Before signing, so the
