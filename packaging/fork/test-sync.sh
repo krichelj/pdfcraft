@@ -835,5 +835,10 @@ chmod +x "$T/ghsettle/gh"
 run_settle() { (export PATH="$T/ghsettle:$PATH" REPO=x/y SYNC_DRY_RUN= && . "$SRC/packaging/fork/lib.sh" && close_settled_asks) && [ "$(cat "$T/ghsettle/calls")" = "close 135" ]; }
 check "asks: the issue of a merged sync PR is closed, the others stay open" bash -c "$(declare -f run_settle); T='$T' SRC='$SRC'; run_settle"
 
+# 10. No early-quitting reader at the end of a pipe in the fork scripts: under pipefail the writer
+# dies of SIGPIPE (exit 141) once its output outgrows the pipe buffer, as the 285-commit sync did on
+# `git show Cargo.toml | sed ...q`.
+check "pipes: no '| head' or quitting sed in the fork scripts" bash -c "! grep -nE '\\| *(head\\b|sed -n [^|]*;q)' '$SRC/packaging/fork/sync-upstream.sh' '$SRC/packaging/fork/release-bump.sh' '$SRC/packaging/fork/lib.sh' | grep -v '^[^:]*:[0-9]*: *#'"
+
 echo "fork automation: $pass passed, $fail failed"
 [ "$fail" = 0 ]

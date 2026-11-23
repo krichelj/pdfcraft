@@ -182,7 +182,8 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
     done
     # Mergiraf keeps both sides' items in their merged order; rustfmt puts them as CI's fmt check
     # wants them (two new `mod` lines, say).
-    edition=$(sed -n 's/^edition = "\([0-9]*\)".*/\1/p' Cargo.toml | head -1)
+    # One sed that quits itself: `| head -1` under pipefail can kill the writer (SIGPIPE, exit 141).
+    edition=$(sed -n '/^edition = "/{s/^edition = "\([0-9]*\)".*/\1/p;q;}' Cargo.toml)
     for f in $mergiraf_resolved; do
       case "$f" in *.rs) rustfmt --edition "${edition:-2024}" "$f" && git add "$f" ;; esac
     done
@@ -190,12 +191,28 @@ if [ -z "$pr" ] || [ -n "$stale" ]; then
     # whichever the merged tree passes `cargo deny` with, or a person decides.
     if [ -n "$took_deny" ]; then
       command -v cargo-deny >/dev/null || die "deny.toml conflicted and cargo-deny isn't on the runner: see own-ci-runners"
+      # Judge the policy against the lock the PR will carry: upstream's lock (taken on a conflict)
+      # with every package the fork had newer kept at the fork's version. Upstream's raw lock had
+      # tokio 1.53.1, whose advisory the fork's 1.54.1 fixes, and failed every policy (v0.22.0).
+      cargo metadata --format-version 1 >/dev/null 2>&1 || true
+      git show sync-base:Cargo.lock >"$RUNNER_TMP/fork.lock"
+      keep_newer_locked "$RUNNER_TMP/fork.lock"
       cp "$RUNNER_TMP/deny.theirs" deny.toml
       if cargo deny --all-features check >/dev/null 2>&1; then
         echo "sync: took upstream's deny.toml; cargo deny passes"
       else
         git merge-file --union -p "$RUNNER_TMP/deny.ours" "$RUNNER_TMP/deny.base" "$RUNNER_TMP/deny.theirs" >deny.toml || true
-        cargo deny --all-features check >/dev/null 2>&1 || die "the merged tree fails cargo deny with either deny.toml; a person decides"
+        if ! cargo deny --all-features check >"$RUNNER_TMP/deny.out" 2>&1; then
+          # Quiet on the hourly re-runs (stop_for_person): one issue, no failure mail each hour.
+          stop_for_person "$branch" "the merged tree fails cargo deny" "Merging storytold/pdfcraft@${up:0:12} fails \`cargo deny --all-features check\` with upstream's deny.toml and with both sides' entries:
+
+\`\`\`
+$(grep -m 40 -E '^(error|warning)\[|ID: |Solution: ' "$RUNNER_TMP/deny.out")
+\`\`\`
+
+Fix the fork (a \`cargo update -p <crate>\` on main, or a deny.toml entry with its reason); the next sync run takes it." \
+            "the merged tree fails cargo deny with either deny.toml; a person decides"
+        fi
         echo "sync: deny.toml keeps both sides' entries; cargo deny passes"
       fi
       git add deny.toml
@@ -286,7 +303,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   fixes=$(git log --first-parent --format=%s sync-base..HEAD | grep '^Sync fix' || true)
 
   base_now="${current%%-*}"
-  base_up=$(git show "$UPSTREAM_REF:Cargo.toml" | sed -n '/^version = "/{s/^version = "\([^"]*\)".*/\1/p;q;}')
+  # Read the manifest whole first: piping `git show` into a sed that quits at the version line
+  # killed git with SIGPIPE (exit 141) once upstream's Cargo.toml outgrew the pipe buffer.
+  up_toml=$(git show "$UPSTREAM_REF:Cargo.toml")
+  base_up=$(sed -n '/^version = "/{s/^version = "\([^"]*\)".*/\1/p;q;}' <<<"$up_toml")
   base_up="${base_up%%-*}"
   # Upstream's version moved past the fork's base: <new base>-p1. Same or older (upstream's main
   # keeps an older version while releases are cut on a branch of their own): the next patch level,
